@@ -3,13 +3,13 @@ let state = 'idle';
 let selected = '';
 function setState(next, message){state=next;$('status').textContent=message;$('orb').className=`orb ${next}`;$('connect').disabled=next!=='idle'||!selected;$('disconnect').disabled=next==='idle'}
 async function loadServers(){
-  selected='';$('connect').disabled=true;$('servers').innerHTML='<div class="loading">Buscando servidores japoneses…</div>';
+  selected='';$('connect').disabled=true;$('servers').innerHTML='<div class="loading">Buscando servidores norte-americanos…</div>';
   try{
     const servers=await window.vpn.listServers();
     $('servers').innerHTML=servers.length?'':'<div class="loading">Nenhum servidor disponível agora.</div>';
     for(const server of servers){
       const button=document.createElement('button');button.className='server';button.dataset.id=server.id;
-      button.innerHTML=`<div><strong>${server.hostName}</strong><span>${server.ip} · ${server.protocol.toUpperCase()}</span></div><div class="metric"><b>${server.ping} ms</b>ping</div><div class="metric"><b>${server.speedMbps} Mbps</b>velocidade</div><div class="metric"><b>${server.sessions}</b>sessões</div>`;
+      button.innerHTML=`<div><strong>${server.hostName}</strong><span>${server.ip} · ${server.protocol.toUpperCase()}</span></div><div class="metric"><b>VPNBook</b>provedor</div><div class="metric"><b>OpenVPN</b>protocolo</div><div class="metric"><b>NA</b>região</div>`;
       button.onclick=async()=>{await window.vpn.selectServer(server.id);selected=server.id;document.querySelectorAll('.server').forEach(x=>x.classList.toggle('selected',x.dataset.id===selected));$('connect').disabled=false};
       $('servers').appendChild(button);
     }

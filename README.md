@@ -1,20 +1,20 @@
-# Japan Discord VPN
+# North America Discord VPN
 
-Aplicativo Electron para abrir o Discord com rotas dinâmicas via uma conexão OpenVPN japonesa.
+Aplicativo Electron para abrir o Discord usando servidores OpenVPN nos Estados Unidos ou Canadá.
 
 ## Requisitos
 
 - Windows 10/11
 - Discord desktop
-- Acesso à internet para obter a lista atual de servidores japoneses
+- Acesso à internet para obter os perfis e a credencial atual do VPNBook
 
 ## Como funciona
 
-O aplicativo consulta a lista pública do VPN Gate, filtra servidores japoneses com OpenVPN e permite escolher pelo ping e velocidade. O instalador oficial e assinado do OpenVPN está incorporado ao instalador do Japan Discord VPN e prepara silenciosamente o mecanismo e o driver de rede. Não é preciso baixar o OpenVPN nem selecionar arquivos `.ovpn`.
+O aplicativo consulta os servidores públicos do VPNBook, baixa automaticamente o perfil escolhido e obtém a credencial rotativa atual. O instalador oficial e assinado do OpenVPN está incorporado ao instalador e prepara silenciosamente o mecanismo e o driver de rede. Não é preciso baixar o OpenVPN, inserir senha nem selecionar arquivos `.ovpn`.
 
-O aplicativo primeiro confirma o túnel japonês, depois encerra e reabre o Discord. As rotas iniciais do Discord são instaladas pelo próprio OpenVPN e novos destinos usados pelo processo são adicionados enquanto ele está aberto. Jogos e outros aplicativos permanecem na conexão normal.
+O aplicativo primeiro confirma o túnel norte-americano, depois encerra e reabre o Discord. Por padrão somente os endereços conhecidos do Discord usam a VPN, enquanto jogos e outros aplicativos permanecem na conexão normal. O modo opcional de compatibilidade encaminha todo o tráfego pela VPN quando necessário para contornar o erro 2012 de transmissão.
 
-Isso reduz o impacto sobre outros aplicativos, mas não pode garantir ping inalterado no próprio Discord nem que o Discord classificará a sessão como japonesa. A região de mídia e a disponibilidade de compartilhamento de tela também dependem dos servidores e políticas do Discord.
+Isso reduz o impacto sobre outros aplicativos, mas não pode garantir ping inalterado no próprio Discord. A região de mídia e a disponibilidade do compartilhamento de tela também dependem dos servidores e políticas do Discord.
 
 ## Atualizações automáticas pelo GitHub
 

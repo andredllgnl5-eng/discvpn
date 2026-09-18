@@ -55,23 +55,30 @@ function parseCsvLine(line) {
 }
 
 async function fetchJapanServers() {
-  const response = await fetch('https://www.vpngate.net/api/iphone/', { signal: AbortSignal.timeout(20000) });
-  if (!response.ok) throw new Error(`VPN Gate respondeu com HTTP ${response.status}.`);
-  const lines = (await response.text()).split(/\r?\n/).filter(Boolean);
-  const headerIndex = lines.findIndex(line => line.startsWith('#HostName,'));
-  if (headerIndex < 0) throw new Error('A lista de servidores recebida é inválida.');
-  const headers = parseCsvLine(lines[headerIndex]).map(x => x.replace(/^#/, ''));
-  return lines.slice(headerIndex + 1).filter(line => !line.startsWith('*')).map(parseCsvLine)
-    .map(row => Object.fromEntries(headers.map((key, index) => [key, row[index] || ''])))
-    .filter(row => row.CountryShort === 'JP' && row.OpenVPN_ConfigData_Base64)
-    .map((row, index) => {
-      const ip = row.IP.replace(/[^0-9.]/g, '');
-      const hostName = row.HostName.replace(/[^a-zA-Z0-9.-]/g, '');
-      const decoded = Buffer.from(row.OpenVPN_ConfigData_Base64, 'base64').toString('utf8');
-      const protocol = /^proto\s+(udp|tcp)/mi.exec(decoded)?.[1]?.toLowerCase() || 'tcp';
-      return { id: `${ip}-${index}`, hostName, ip, protocol, ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, config: row.OpenVPN_ConfigData_Base64 };
-    })
-    .sort((a, b) => (a.protocol === 'udp' ? 0 : 1) - (b.protocol === 'udp' ? 0 : 1) || a.ping - b.ping || b.speedMbps - a.speedMbps).slice(0, 30);
+  const pageResponse = await fetch('https://www.vpnbook.com/freevpn/openvpn', { signal: AbortSignal.timeout(20000) });
+  if (!pageResponse.ok) throw new Error(`VPNBook respondeu com HTTP ${pageResponse.status}.`);
+  const page = await pageResponse.text();
+  const password = /Password<\/label>[\s\S]{0,600}?<code[^>]*>([^<]+)<\/code>/i.exec(page)?.[1]?.trim();
+  if (!password) throw new Error('Não foi possível obter a credencial atual do VPNBook.');
+  const hosts = [
+    { id: 'us16', name: 'Estados Unidos 1', host: 'us16.vpnbook.com', ip: '147.135.15.16', country: 'US' },
+    { id: 'us178', name: 'Estados Unidos 2', host: 'us178.vpnbook.com', ip: '147.135.37.178', country: 'US' },
+    { id: 'ca149', name: 'Canadá 1', host: 'ca149.vpnbook.com', ip: '144.217.253.149', country: 'CA' },
+    { id: 'ca196', name: 'Canadá 2', host: 'ca196.vpnbook.com', ip: '142.4.216.196', country: 'CA' }
+  ];
+  const protocols = ['udp25000', 'udp53'];
+  const servers = [];
+  for (const host of hosts) {
+    for (const profile of protocols) {
+      const url = `https://www.vpnbook.com/api/openvpn?hostname=${host.host}&protocol=${profile}&ip=${host.ip}`;
+      const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) continue;
+      const config = Buffer.from(await response.arrayBuffer()).toString('base64');
+      servers.push({ id: `${host.id}-${profile}`, hostName: `${host.name} · ${profile === 'udp25000' ? 'UDP rápido' : 'UDP alternativo'}`, ip: host.ip, protocol: 'udp', ping: 0, speedMbps: 0, sessions: 0, score: 0, username: 'vpnbook', password, config });
+    }
+  }
+  if (!servers.length) throw new Error('Nenhum servidor da América do Norte respondeu.');
+  return servers;
 }
 
 function prepareServerConfig(server) {
@@ -79,7 +86,7 @@ function prepareServerConfig(server) {
   fs.mkdirSync(dir, { recursive: true });
   const authPath = path.join(dir, 'auth.txt');
   const configPath = path.join(dir, 'selected-japan-server.ovpn');
-  fs.writeFileSync(authPath, 'vpn\nvpn\n', { mode: 0o600 });
+  fs.writeFileSync(authPath, `${server.username || 'vpn'}\n${server.password || 'vpn'}\n`, { mode: 0o600 });
   const escapedAuthPath = authPath.replace(/\\/g, '\\\\');
   let config = Buffer.from(server.config, 'base64').toString('utf8');
   if (/^auth-user-pass.*$/m.test(config)) config = config.replace(/^auth-user-pass.*$/m, `auth-user-pass "${escapedAuthPath}"`);
@@ -117,10 +124,10 @@ function tryVpnServer(openVpn, server, routeIps, fullTunnel, attempt, total) {
       const line = data.toString();
       log(line);
       if (connected && /SIGUSR1|Restart pause|Server poll timeout|Inactivity timeout/.test(line)) {
-        send('state', { state: 'connecting', message: `Reconectando ao Japão — ${server.hostName}…` });
+        send('state', { state: 'connecting', message: `Reconectando à América do Norte — ${server.hostName}…` });
       }
       if (connected && line.includes('Initialization Sequence Completed')) {
-        send('state', { state: 'connected', message: `Discord pelo Japão — ${server.hostName}` });
+        send('state', { state: 'connected', message: `Discord pela América do Norte — ${server.hostName}` });
       }
       if (line.includes('Initialization Sequence Completed') && !settled) {
         settled = true;
@@ -259,7 +266,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
   const openVpn = await ensureOpenVpn();
   const discord = await findDiscord();
   if (!discord) throw new Error('Discord não encontrado. Instale a versão desktop.');
-  if (!selectedServer) throw new Error('Selecione um servidor japonês.');
+  if (!selectedServer) throw new Error('Selecione um servidor dos Estados Unidos ou Canadá.');
   await stopVpn();
   const initialRouteIps = fullTunnel ? [] : await resolveDiscordIps();
   if (!fullTunnel && !initialRouteIps.length) throw new Error('Não foi possível resolver os endereços do Discord. Verifique o DNS e tente novamente.');
@@ -278,7 +285,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
   }
   if (!connectedServer) {
     send('state', { state: 'idle', message: 'Nenhum servidor respondeu' });
-    throw new Error('Os servidores japoneses testados estão indisponíveis. Atualize a lista e tente novamente.');
+    throw new Error('Os servidores norte-americanos testados estão indisponíveis. Atualize a lista e tente novamente.');
   }
   selectedServer = connectedServer;
   send('stats', { routes: initialRouteIps.length, fullTunnel });
@@ -288,7 +295,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
     log(`Aviso ao reiniciar Discord: ${error.message}`);
   }
   spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
-  send('state', { state: 'connected', message: `Discord pelo Japão — ${connectedServer.hostName}` });
+  send('state', { state: 'connected', message: `Discord pela América do Norte — ${connectedServer.hostName}` });
   return true;
 });
 ipcMain.handle('disconnect', stopVpn);
