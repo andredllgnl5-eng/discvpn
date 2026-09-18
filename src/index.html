@@ -8,8 +8,9 @@
     <div class="server-head"><div><label>Servidores no Japão</label><small>Escolha pelo ping e velocidade estimados</small></div><button id="refresh">Atualizar</button></div>
     <div id="servers" class="servers"><div class="loading">Buscando servidores japoneses…</div></div>
   </section>
+  <label class="mode"><input id="stream-mode" type="checkbox" checked><span><strong>Compatibilidade de transmissão</strong><small>Recomendado para evitar tela preta e erro 2012. Todo o tráfego usa o Japão enquanto conectado.</small></span></label>
   <button class="primary" id="connect" disabled>Conectar e abrir Discord</button><button class="secondary" id="disconnect" disabled>Desconectar</button>
   <details><summary>Diagnóstico</summary><pre id="log">Pronto.</pre></details>
-  <p class="note">O Discord será fechado e reaberto somente após o túnel japonês conectar. Apenas os destinos usados pelo Discord entram no túnel; jogos e outros aplicativos continuam na conexão normal. O recurso de tela continua sujeito às políticas do Discord.</p>
+  <p class="note">O Discord será fechado e reaberto somente após o túnel japonês conectar. No modo de compatibilidade, todo o tráfego passa pelo Japão para que sinalização e mídia usem a mesma rota. Desmarque-o para usar túnel dividido com menor impacto no ping.</p>
   <footer>Feito por: <strong>Shivi Star</strong></footer>
 </main><script src="renderer.js"></script></body></html>

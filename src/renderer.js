@@ -17,9 +17,9 @@ async function loadServers(){
 }
 async function refresh(){const i=await window.vpn.info();$('discord').textContent=i.discord?'Encontrado':'Não encontrado';$('discord').className=i.discord?'ok':'';$('openvpn').textContent=i.openVpn?'Pronto':'Será preparado ao conectar';$('openvpn').className='ok';setState('idle','Desconectado');await loadServers()}
 $('refresh').onclick=loadServers;
-$('connect').onclick=async()=>{try{await window.vpn.connect()}catch(e){setState('idle',e.message||'Não foi possível conectar');$('log').textContent+=`\n${e.message}`;$('log').closest('details').open=true}};
+$('connect').onclick=async()=>{try{await window.vpn.connect({fullTunnel:$('stream-mode').checked})}catch(e){setState('idle',e.message||'Não foi possível conectar');$('log').textContent+=`\n${e.message}`;$('log').closest('details').open=true}};
 $('disconnect').onclick=()=>window.vpn.disconnect();
 window.vpn.onState(x=>setState(x.state,x.message));
 window.vpn.onLog(x=>{$('log').textContent+=`\n${x}`;$('log').scrollTop=$('log').scrollHeight});
-window.vpn.onStats(x=>$('routes').textContent=`${x.routes} rotas protegidas`);
+window.vpn.onStats(x=>$('routes').textContent=x.fullTunnel?'Todo o tráfego protegido':`${x.routes} rotas protegidas`);
 refresh();

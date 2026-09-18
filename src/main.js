@@ -88,13 +88,13 @@ function prepareServerConfig(server) {
   return configPath;
 }
 
-function tryVpnServer(openVpn, server, routeIps, attempt, total) {
+function tryVpnServer(openVpn, server, routeIps, fullTunnel, attempt, total) {
   return new Promise((resolve, reject) => {
     const vpnConfig = prepareServerConfig(server);
     send('state', { state: 'connecting', message: `Tentando servidor ${attempt} de ${total}…` });
     log(`Tentativa ${attempt}/${total}: ${server.hostName} (${server.ip})`);
-    const routeArgs = routeIps.flatMap(ip => ['--route', ip, '255.255.255.255', 'vpn_gateway']);
-    const child = spawn(openVpn, ['--config', vpnConfig, '--route-nopull', '--auth-nocache', '--connect-timeout', '8', '--connect-retry', '2', '10', ...routeArgs], { windowsHide: true });
+    const routeArgs = fullTunnel ? ['--redirect-gateway', 'def1'] : ['--route-nopull', ...routeIps.flatMap(ip => ['--route', ip, '255.255.255.255', 'vpn_gateway'])];
+    const child = spawn(openVpn, ['--config', vpnConfig, '--auth-nocache', '--connect-timeout', '8', '--connect-retry', '2', '10', ...routeArgs], { windowsHide: true });
     vpnProcess = child;
     let settled = false;
     let connected = false;
@@ -254,14 +254,15 @@ ipcMain.handle('select-server', (_, id) => {
   if (!selectedServer) throw new Error('Servidor não encontrado. Atualize a lista.');
   return { id: selectedServer.id, hostName: selectedServer.hostName };
 });
-ipcMain.handle('connect', async () => {
+ipcMain.handle('connect', async (_, options = {}) => {
+  const fullTunnel = options.fullTunnel !== false;
   const openVpn = await ensureOpenVpn();
   const discord = await findDiscord();
   if (!discord) throw new Error('Discord não encontrado. Instale a versão desktop.');
   if (!selectedServer) throw new Error('Selecione um servidor japonês.');
   await stopVpn();
-  const initialRouteIps = await resolveDiscordIps();
-  if (!initialRouteIps.length) throw new Error('Não foi possível resolver os endereços do Discord. Verifique o DNS e tente novamente.');
+  const initialRouteIps = fullTunnel ? [] : await resolveDiscordIps();
+  if (!fullTunnel && !initialRouteIps.length) throw new Error('Não foi possível resolver os endereços do Discord. Verifique o DNS e tente novamente.');
   const available = [...(global.availableServers?.values() || [])];
   const udp = available.filter(server => server.protocol === 'udp' && server.id !== selectedServer.id);
   const tcp = available.filter(server => server.protocol !== 'udp' && server.id !== selectedServer.id);
@@ -269,7 +270,7 @@ ipcMain.handle('connect', async () => {
   let connectedServer = null;
   for (let index = 0; index < candidates.length; index++) {
     try {
-      connectedServer = await tryVpnServer(openVpn, candidates[index], initialRouteIps, index + 1, candidates.length);
+      connectedServer = await tryVpnServer(openVpn, candidates[index], initialRouteIps, fullTunnel, index + 1, candidates.length);
       break;
     } catch (error) {
       log(`${candidates[index].hostName} indisponível: ${error.message}`);
@@ -280,7 +281,7 @@ ipcMain.handle('connect', async () => {
     throw new Error('Os servidores japoneses testados estão indisponíveis. Atualize a lista e tente novamente.');
   }
   selectedServer = connectedServer;
-  send('stats', { routes: initialRouteIps.length });
+  send('stats', { routes: initialRouteIps.length, fullTunnel });
   try {
     await ps("Get-Process Discord -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; exit 0");
   } catch (error) {
