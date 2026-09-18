@@ -256,12 +256,9 @@ ipcMain.handle('connect', async () => {
     throw new Error('Os servidores japoneses testados estão indisponíveis. Atualize a lista e tente novamente.');
   }
   selectedServer = connectedServer;
-  await discoverVpnInterface();
-  initialRouteIps.forEach(ip => addedRoutes.add(ip));
-  send('stats', { routes: addedRoutes.size });
+  send('stats', { routes: initialRouteIps.length });
   await ps("Get-Process Discord -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue");
   spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
-  monitorTimer = setInterval(() => addDiscordRoutes().catch(error => log(`Monitor de rotas: ${error.message}`)), 3000);
   send('state', { state: 'connected', message: `Discord pelo Japão — ${connectedServer.hostName}` });
   return true;
 });
