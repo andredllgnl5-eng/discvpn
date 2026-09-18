@@ -1,8 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('vpn', {
   info: () => ipcRenderer.invoke('system-info'),
-  chooseConfig: () => ipcRenderer.invoke('choose-config'),
-  installOpenVpn: () => ipcRenderer.invoke('open-openvpn'),
+  listServers: () => ipcRenderer.invoke('list-servers'),
+  selectServer: id => ipcRenderer.invoke('select-server', id),
   connect: () => ipcRenderer.invoke('connect'),
   disconnect: () => ipcRenderer.invoke('disconnect'),
   onState: cb => ipcRenderer.on('state', (_, value) => cb(value)),

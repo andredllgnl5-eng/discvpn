@@ -6,10 +6,11 @@ Aplicativo Electron para abrir o Discord com rotas dinâmicas via uma conexão O
 
 - Windows 10/11
 - Discord desktop
-- OpenVPN Community
-- Um perfil `.ovpn` válido de um servidor localizado no Japão
+- Acesso à internet para obter a lista atual de servidores japoneses
 
 ## Como funciona
+
+O aplicativo consulta a lista pública do VPN Gate, filtra servidores japoneses com OpenVPN e permite escolher pelo ping e velocidade. Na primeira conexão, se necessário, ele baixa o instalador estável no domínio oficial do OpenVPN, valida a assinatura digital e prepara o mecanismo silenciosamente. Não é preciso baixar ou selecionar arquivos `.ovpn`.
 
 O OpenVPN inicia com `route-nopull`, portanto não substitui a rota padrão do Windows. Depois que o Discord abre, o aplicativo observa os IPs remotos usados pelos processos do Discord e adiciona rotas `/32` pela interface OpenVPN. Ao desconectar, as rotas são removidas.
 

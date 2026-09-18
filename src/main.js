@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -7,7 +7,7 @@ const { autoUpdater } = require('electron-updater');
 let win;
 let vpnProcess = null;
 let monitorTimer = null;
-let vpnConfig = '';
+let selectedServer = null;
 let vpnInterface = '';
 const addedRoutes = new Set();
 
@@ -24,6 +24,82 @@ function ps(script) {
 function findOpenVpn() {
   const candidates = ['C:\\Program Files\\OpenVPN\\bin\\openvpn.exe'];
   return candidates.find(fs.existsSync) || '';
+}
+
+async function ensureOpenVpn() {
+  let executable = findOpenVpn();
+  if (executable) return executable;
+  send('state', { state: 'connecting', message: 'Preparando o mecanismo OpenVPN…' });
+  send('log', 'Baixando o pacote oficial OpenVPN…');
+  const runtimeDir = path.join(app.getPath('userData'), 'runtime');
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  const msiPath = path.join(runtimeDir, 'openvpn-stable-amd64.msi');
+  const response = await fetch('https://build.openvpn.net/downloads/releases/latest/openvpn-latest-stable-amd64.msi', { signal: AbortSignal.timeout(120000) });
+  if (!response.ok) throw new Error(`Falha ao baixar o OpenVPN: HTTP ${response.status}.`);
+  fs.writeFileSync(msiPath, Buffer.from(await response.arrayBuffer()));
+  const signature = await ps(`(Get-AuthenticodeSignature -LiteralPath '${msiPath.replace(/'/g, "''")}').Status`);
+  if (signature.trim() !== 'Valid') {
+    fs.rmSync(msiPath, { force: true });
+    throw new Error('A assinatura digital do instalador OpenVPN não é válida. A instalação foi cancelada.');
+  }
+  send('log', 'Assinatura validada. Instalando o OpenVPN…');
+  await new Promise((resolve, reject) => {
+    const installer = spawn('msiexec.exe', ['/i', msiPath, '/qn', '/norestart'], { windowsHide: true });
+    installer.stdout.on('data', data => send('log', data.toString().trim()));
+    installer.stderr.on('data', data => send('log', data.toString().trim()));
+    installer.on('error', reject);
+    installer.on('exit', code => (code === 0 || code === 3010) ? resolve() : reject(new Error(`A instalação automática terminou com código ${code}.`)));
+  });
+  fs.rmSync(msiPath, { force: true });
+  executable = findOpenVpn();
+  if (!executable) throw new Error('O OpenVPN foi instalado, mas ainda não foi localizado. Reinicie o aplicativo.');
+  return executable;
+}
+
+function parseCsvLine(line) {
+  const values = [];
+  let value = '', quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (quoted && line[i + 1] === '"') { value += '"'; i++; } else quoted = !quoted;
+    } else if (char === ',' && !quoted) { values.push(value); value = ''; }
+    else value += char;
+  }
+  values.push(value);
+  return values;
+}
+
+async function fetchJapanServers() {
+  const response = await fetch('https://www.vpngate.net/api/iphone/', { signal: AbortSignal.timeout(20000) });
+  if (!response.ok) throw new Error(`VPN Gate respondeu com HTTP ${response.status}.`);
+  const lines = (await response.text()).split(/\r?\n/).filter(Boolean);
+  const headerIndex = lines.findIndex(line => line.startsWith('#HostName,'));
+  if (headerIndex < 0) throw new Error('A lista de servidores recebida é inválida.');
+  const headers = parseCsvLine(lines[headerIndex]).map(x => x.replace(/^#/, ''));
+  return lines.slice(headerIndex + 1).filter(line => !line.startsWith('*')).map(parseCsvLine)
+    .map(row => Object.fromEntries(headers.map((key, index) => [key, row[index] || ''])))
+    .filter(row => row.CountryShort === 'JP' && row.OpenVPN_ConfigData_Base64)
+    .map((row, index) => {
+      const ip = row.IP.replace(/[^0-9.]/g, '');
+      const hostName = row.HostName.replace(/[^a-zA-Z0-9.-]/g, '');
+      return { id: `${ip}-${index}`, hostName, ip, ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, config: row.OpenVPN_ConfigData_Base64 };
+    })
+    .sort((a, b) => a.ping - b.ping || b.speedMbps - a.speedMbps).slice(0, 30);
+}
+
+function prepareServerConfig(server) {
+  const dir = path.join(app.getPath('userData'), 'runtime');
+  fs.mkdirSync(dir, { recursive: true });
+  const authPath = path.join(dir, 'auth.txt');
+  const configPath = path.join(dir, 'selected-japan-server.ovpn');
+  fs.writeFileSync(authPath, 'vpn\nvpn\n', { mode: 0o600 });
+  const escapedAuthPath = authPath.replace(/\\/g, '\\\\');
+  let config = Buffer.from(server.config, 'base64').toString('utf8');
+  if (/^auth-user-pass.*$/m.test(config)) config = config.replace(/^auth-user-pass.*$/m, `auth-user-pass "${escapedAuthPath}"`);
+  else config += `\nauth-user-pass "${escapedAuthPath}"\n`;
+  fs.writeFileSync(configPath, config, 'utf8');
+  return configPath;
 }
 
 async function findDiscord() {
@@ -102,19 +178,23 @@ async function stopVpn() {
   send('state', { state: 'idle', message: 'Desconectado' });
 }
 
-ipcMain.handle('system-info', async () => ({ openVpn: findOpenVpn(), discord: await findDiscord(), config: vpnConfig }));
-ipcMain.handle('choose-config', async () => {
-  const result = await dialog.showOpenDialog(win, { title: 'Selecione um servidor OpenVPN do Japão', filters: [{ name: 'OpenVPN', extensions: ['ovpn'] }], properties: ['openFile'] });
-  if (!result.canceled) vpnConfig = result.filePaths[0];
-  return vpnConfig;
+ipcMain.handle('system-info', async () => ({ openVpn: findOpenVpn(), discord: await findDiscord(), selectedServer: selectedServer?.id || '' }));
+ipcMain.handle('list-servers', async () => {
+  const servers = await fetchJapanServers();
+  global.availableServers = new Map(servers.map(server => [server.id, server]));
+  return servers.map(({ config, ...server }) => server);
 });
-ipcMain.handle('open-openvpn', () => shell.openExternal('https://openvpn.net/community-downloads/'));
+ipcMain.handle('select-server', (_, id) => {
+  selectedServer = global.availableServers?.get(id) || null;
+  if (!selectedServer) throw new Error('Servidor não encontrado. Atualize a lista.');
+  return { id: selectedServer.id, hostName: selectedServer.hostName };
+});
 ipcMain.handle('connect', async () => {
-  const openVpn = findOpenVpn();
+  const openVpn = await ensureOpenVpn();
   const discord = await findDiscord();
-  if (!openVpn) throw new Error('OpenVPN Community não encontrado. Instale-o pelo botão indicado.');
   if (!discord) throw new Error('Discord não encontrado. Instale a versão desktop.');
-  if (!vpnConfig || !fs.existsSync(vpnConfig)) throw new Error('Selecione um arquivo .ovpn de um servidor no Japão.');
+  if (!selectedServer) throw new Error('Selecione um servidor japonês.');
+  const vpnConfig = prepareServerConfig(selectedServer);
   await stopVpn();
   send('state', { state: 'connecting', message: 'Conectando ao Japão…' });
   vpnProcess = spawn(openVpn, ['--config', vpnConfig, '--route-nopull', '--auth-nocache'], { windowsHide: true });
