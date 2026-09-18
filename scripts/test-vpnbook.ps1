@@ -1,3 +1,4 @@
+param([switch]$FullTunnel)
 $ErrorActionPreference = 'Stop'
 $page = (Invoke-WebRequest -UseBasicParsing -Uri 'https://www.vpnbook.com/freevpn/openvpn' -TimeoutSec 20).Content
 $match = [regex]::Match($page, 'Password</label>[\s\S]{0,600}?<code[^>]*>([^<]+)</code>', 'IgnoreCase')
@@ -21,13 +22,26 @@ $config += "`npull-filter ignore `"redirect-gateway`"`npull-filter ignore `"bloc
 
 $openVpn = 'C:\Program Files\OpenVPN\bin\openvpn.exe'
 if (-not (Test-Path -LiteralPath $openVpn)) { throw 'OpenVPN não encontrado.' }
-$process = Start-Process -FilePath $openVpn -ArgumentList @('--config', $configPath, '--route-nopull', '--auth-nocache', '--disable-dco', '--connect-timeout', '8', '--connect-retry-max', '1', '--log', $logPath) -PassThru -WindowStyle Hidden
+$routeArguments = if ($FullTunnel) { @('--redirect-gateway', 'def1') } else { @('--route-nopull') }
+$arguments = @('--config', $configPath, '--auth-nocache', '--disable-dco', '--connect-timeout', '8', '--connect-retry-max', '1', '--log', $logPath) + $routeArguments
+$process = Start-Process -FilePath $openVpn -ArgumentList $arguments -PassThru -WindowStyle Hidden
 try {
   $deadline = (Get-Date).AddSeconds(35)
   do {
     Start-Sleep -Milliseconds 500
     $log = if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Raw } else { '' }
-    if ($log -match 'Initialization Sequence Completed') { Write-Output 'VPNBOOK_TEST_OK'; exit 0 }
+    if ($log -match 'Initialization Sequence Completed') {
+      if ($FullTunnel) {
+        $pingOutput = & ping.exe -4 -n 5 -w 1200 1.1.1.1
+        $replies = @($pingOutput | Select-String 'TTL=').Count
+        $publicIp = (Invoke-WebRequest -UseBasicParsing -Uri 'https://api.ipify.org' -TimeoutSec 15).Content
+        $discord = Test-NetConnection 'latency.discord.media' -Port 443 -InformationLevel Quiet
+        Write-Output "VPNBOOK_FULL_TEST replies=$replies/5 publicIp=$publicIp discord443=$discord"
+        if ($replies -lt 4 -or -not $discord) { throw 'Qualidade insuficiente para mídia do Discord.' }
+      }
+      Write-Output 'VPNBOOK_TEST_OK'
+      exit 0
+    }
     if ($process.HasExited) { throw "OpenVPN finalizou com código $($process.ExitCode).`n$log" }
   } while ((Get-Date) -lt $deadline)
   throw "Tempo esgotado.`n$log"

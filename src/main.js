@@ -77,9 +77,31 @@ async function fetchJapanServers() {
       const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
       if (!response.ok) return null;
       const config = Buffer.from(await response.arrayBuffer()).toString('base64');
-      return { id: `${host.id}-${profile.id}`, hostName: `${host.name} · ${profile.label}`, ip: host.ip, protocol: profile.protocol, ping: 0, speedMbps: 0, sessions: 0, score: 0, username: 'vpnbook', password, config };
+      return { id: `${host.id}-${profile.id}`, hostName: `${host.name} · ${profile.label}`, ip: host.ip, protocol: profile.protocol, provider: 'VPNBook', ping: 0, speedMbps: 0, sessions: 0, score: 0, username: 'vpnbook', password, config };
     } catch { return null; }
   })))).filter(Boolean);
+  try {
+    const gateResponse = await fetch('https://www.vpngate.net/api/iphone/', { signal: AbortSignal.timeout(25000) });
+    if (gateResponse.ok) {
+      const lines = (await gateResponse.text()).split(/\r?\n/).filter(Boolean);
+      const headerIndex = lines.findIndex(line => line.startsWith('#HostName,'));
+      if (headerIndex >= 0) {
+        const headers = parseCsvLine(lines[headerIndex]).map(value => value.replace(/^#/, ''));
+        const gateServers = lines.slice(headerIndex + 1).filter(line => !line.startsWith('*')).map(parseCsvLine)
+          .map(row => Object.fromEntries(headers.map((key, index) => [key, row[index] || ''])))
+          .filter(row => ['US', 'CA'].includes(row.CountryShort) && row.OpenVPN_ConfigData_Base64)
+          .map((row, index) => {
+            const decoded = Buffer.from(row.OpenVPN_ConfigData_Base64, 'base64').toString('utf8');
+            const protocol = /^proto\s+(udp|tcp)/mi.exec(decoded)?.[1]?.toLowerCase() || 'tcp';
+            const country = row.CountryShort === 'CA' ? 'Canadá' : 'Estados Unidos';
+            return { id: `vpngate-${row.IP}-${index}`, hostName: `${country} · VPN Gate ${protocol.toUpperCase()}`, ip: row.IP, protocol, provider: 'VPN Gate', ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, username: 'vpn', password: 'vpn', config: row.OpenVPN_ConfigData_Base64 };
+          })
+          .sort((a, b) => (a.protocol === 'udp' ? 0 : 1) - (b.protocol === 'udp' ? 0 : 1) || a.ping - b.ping)
+          .slice(0, 12);
+        servers.unshift(...gateServers);
+      }
+    }
+  } catch (error) { log(`VPN Gate: ${error.message}`); }
   if (!servers.length) throw new Error('Nenhum servidor da América do Norte respondeu.');
   return servers;
 }
@@ -203,6 +225,22 @@ function testTunnelQuality() {
   });
 }
 
+async function verifyNorthAmericaExit() {
+  const services = [
+    ['https://ipapi.co/json/', data => data.country_code],
+    ['https://ipwho.is/', data => data.country_code]
+  ];
+  for (const [url, getCountry] of services) {
+    try {
+      const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+      const data = await response.json();
+      const country = String(getCountry(data) || '').toUpperCase();
+      if (country) return { valid: ['US', 'CA'].includes(country), country, ip: data.ip || '' };
+    } catch (error) { log(`Verificação de região: ${error.message}`); }
+  }
+  return { valid: false, country: '', ip: '' };
+}
+
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function createWindow() {
@@ -261,13 +299,28 @@ async function removeRoutes() {
   addedRoutes.clear();
 }
 
+async function cleanupOpenVpnNetworkState() {
+  try {
+    await ps("$indexes=@(Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object {$_.InterfaceDescription -match 'OpenVPN|TAP|Wintun|DCO' -or $_.Name -match 'OpenVPN|TAP|Wintun'} | Select-Object -ExpandProperty ifIndex); if($indexes.Count){Get-NetRoute -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Where-Object {$indexes -contains $_.InterfaceIndex} | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue}; Clear-DnsClientCache -ErrorAction SilentlyContinue");
+    log('Rotas antigas do OpenVPN removidas.');
+  } catch (error) {
+    log(`Limpeza de rede: ${error.message}`);
+  }
+}
+
 async function stopVpn() {
   if (connectionTimer) clearTimeout(connectionTimer);
   connectionTimer = null;
   if (monitorTimer) clearInterval(monitorTimer);
   monitorTimer = null;
   await removeRoutes();
-  if (vpnProcess) { vpnProcess.kill(); vpnProcess = null; }
+  if (vpnProcess) {
+    const processToStop = vpnProcess;
+    vpnProcess = null;
+    processToStop.kill();
+    await wait(1200);
+  }
+  await cleanupOpenVpnNetworkState();
   vpnInterface = '';
   send('state', { state: 'idle', message: 'Desconectado' });
 }
@@ -309,6 +362,16 @@ ipcMain.handle('connect', async (_, options = {}) => {
           const unstableProcess = vpnProcess;
           vpnProcess = null;
           if (unstableProcess && !unstableProcess.killed) unstableProcess.kill();
+          connectedServer = null;
+          await wait(1800);
+          continue;
+        }
+        const exit = await verifyNorthAmericaExit();
+        log(`Saída VPN: ${exit.ip || 'desconhecida'} (${exit.country || 'região desconhecida'})`);
+        if (!exit.valid) {
+          const invalidProcess = vpnProcess;
+          vpnProcess = null;
+          if (invalidProcess && !invalidProcess.killed) invalidProcess.kill();
           connectedServer = null;
           await wait(1800);
           continue;

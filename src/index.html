@@ -5,10 +5,10 @@
   <section class="setup">
     <div class="row"><span>Discord</span><b id="discord">Verificando…</b></div>
     <div class="row"><span>Mecanismo VPN</span><b id="openvpn">Preparação automática</b></div>
-    <div class="server-head"><div><label>Servidores na América do Norte</label><small>UDP otimizado · TCP automático como reserva</small></div><button id="refresh">Atualizar</button></div>
+    <div class="server-head"><div><label>Servidores na América do Norte</label><small>VPN Gate + VPNBook · troca automática em caso de falha</small></div><button id="refresh">Atualizar</button></div>
     <div id="servers" class="servers"><div class="loading">Buscando servidores norte-americanos…</div></div>
   </section>
-  <label class="mode"><input id="stream-mode" type="checkbox"><span><strong>Voz e transmissão estáveis (recomendado)</strong><small>Testa perda e latência antes de abrir o Discord e troca servidores instáveis automaticamente.</small></span></label>
+  <label class="mode"><input id="stream-mode" type="checkbox" checked disabled><span><strong>Voz e transmissão pela América do Norte</strong><small>Obrigatório para que voz, vídeo e compartilhamento usem a mesma região. Todo o tráfego usa a VPN enquanto estiver conectado.</small></span></label>
   <button class="primary" id="connect" disabled>Conectar e abrir Discord</button><button class="secondary" id="disconnect" disabled>Desconectar</button>
   <details><summary>Diagnóstico</summary><pre id="log">Pronto.</pre></details>
   <p class="note">Por padrão, somente destinos conhecidos do Discord entram no túnel norte-americano; jogos e outros aplicativos continuam na conexão normal. Se transmissões apresentarem erro 2012, ative a compatibilidade para que sinalização e mídia usem a mesma rota.</p>
