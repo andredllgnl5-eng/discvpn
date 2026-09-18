@@ -1,0 +1,13 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Japan Discord VPN</title><link rel="stylesheet" href="style.css"></head>
+<body><main>
+  <header><img src="../assets/icon.png" alt=""><div><span class="eyebrow">TÚNEL DIVIDIDO</span><h1>Japan Discord VPN</h1><p>Somente destinos usados pelo Discord entram no túnel.</p></div></header>
+  <section class="status-card"><div class="orb" id="orb"></div><div><small>ESTADO</small><strong id="status">Preparando…</strong><span id="routes">0 rotas protegidas</span></div></section>
+  <section class="setup">
+    <div class="row"><span>Discord</span><b id="discord">Verificando…</b></div>
+    <div class="row"><span>OpenVPN Community</span><b id="openvpn">Verificando…</b><button id="install">Instalar</button></div>
+    <div class="config"><label>Servidor OpenVPN no Japão (.ovpn)</label><div><input id="config" readonly placeholder="Nenhum arquivo selecionado"><button id="choose">Selecionar</button></div></div>
+  </section>
+  <button class="primary" id="connect">Conectar e abrir Discord</button><button class="secondary" id="disconnect" disabled>Desconectar</button>
+  <details><summary>Diagnóstico</summary><pre id="log">Pronto.</pre></details>
+  <p class="note">A rota é limitada aos IPs observados no Discord. O tráfego do Discord pode ter latência maior por viajar até o Japão; outros aplicativos permanecem na conexão normal.</p>
+</main><script src="renderer.js"></script></body></html>

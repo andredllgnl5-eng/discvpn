@@ -1,0 +1,43 @@
+{
+  "name": "japan-discord-vpn",
+  "version": "1.0.0",
+  "description": "Split tunnel OpenVPN launcher for Discord",
+  "main": "src/main.js",
+  "author": "Andre",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win nsis",
+    "publish": "electron-builder --win nsis --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "electron": "^38.1.2",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "br.com.andre.japandiscordvpn",
+    "productName": "Japan Discord VPN",
+    "directories": { "output": "dist" },
+    "files": ["src/**/*", "assets/**/*", "package.json"],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Japan Discord VPN"
+    },
+    "publish": [{
+      "provider": "github",
+      "owner": "andredllgnl5-eng",
+      "repo": "discvpn",
+      "releaseType": "release"
+    }]
+  }
+}
