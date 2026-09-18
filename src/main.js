@@ -79,6 +79,49 @@ function prepareServerConfig(server) {
   return configPath;
 }
 
+function tryVpnServer(openVpn, server, attempt, total) {
+  return new Promise((resolve, reject) => {
+    const vpnConfig = prepareServerConfig(server);
+    send('state', { state: 'connecting', message: `Tentando servidor ${attempt} de ${total}…` });
+    send('log', `Tentativa ${attempt}/${total}: ${server.hostName} (${server.ip})`);
+    const child = spawn(openVpn, ['--config', vpnConfig, '--auth-nocache', '--connect-timeout', '8', '--connect-retry-max', '1'], { windowsHide: true });
+    vpnProcess = child;
+    let settled = false;
+    let connected = false;
+    const timer = setTimeout(() => fail('tempo limite'), 16000);
+    const fail = reason => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!child.killed) child.kill();
+      if (vpnProcess === child) vpnProcess = null;
+      reject(new Error(reason));
+    };
+    const handleOutput = data => {
+      const line = data.toString();
+      send('log', line.trim());
+      if (line.includes('Initialization Sequence Completed') && !settled) {
+        settled = true;
+        connected = true;
+        clearTimeout(timer);
+        resolve(server);
+      } else if (/Exiting due to fatal error|AUTH_FAILED|TLS Error/.test(line) && !connected) {
+        fail('falha do servidor');
+      }
+    };
+    child.stdout.on('data', handleOutput);
+    child.stderr.on('data', handleOutput);
+    child.on('error', error => fail(error.message));
+    child.on('exit', code => {
+      if (!connected) fail(`OpenVPN finalizado (${code})`);
+      else if (vpnProcess === child) {
+        vpnProcess = null;
+        send('state', { state: 'idle', message: `OpenVPN finalizado (${code})` });
+      }
+    });
+  });
+}
+
 async function findDiscord() {
   const base = path.join(process.env.LOCALAPPDATA || '', 'Discord');
   if (!fs.existsSync(base)) return '';
@@ -173,38 +216,27 @@ ipcMain.handle('connect', async () => {
   const discord = await findDiscord();
   if (!discord) throw new Error('Discord não encontrado. Instale a versão desktop.');
   if (!selectedServer) throw new Error('Selecione um servidor japonês.');
-  const vpnConfig = prepareServerConfig(selectedServer);
   await stopVpn();
-  send('state', { state: 'connecting', message: 'Conectando ao Japão…' });
   await ps("Get-Process Discord -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue");
-  vpnProcess = spawn(openVpn, ['--config', vpnConfig, '--auth-nocache', '--connect-timeout', '15', '--connect-retry-max', '2'], { windowsHide: true });
-  let connected = false;
-  connectionTimer = setTimeout(() => {
-    if (!connected && vpnProcess) {
-      vpnProcess.kill();
-      vpnProcess = null;
-      send('state', { state: 'idle', message: 'Servidor indisponível — escolha outro' });
-      send('log', 'Tempo limite de conexão atingido. Selecione outro servidor japonês.');
+  const available = [...(global.availableServers?.values() || [])];
+  const candidates = [selectedServer, ...available.filter(server => server.id !== selectedServer.id)].slice(0, 5);
+  let connectedServer = null;
+  for (let index = 0; index < candidates.length; index++) {
+    try {
+      connectedServer = await tryVpnServer(openVpn, candidates[index], index + 1, candidates.length);
+      break;
+    } catch (error) {
+      send('log', `${candidates[index].hostName} indisponível: ${error.message}`);
     }
-  }, 35000);
-  vpnProcess.stdout.on('data', async data => {
-    const line = data.toString(); send('log', line.trim());
-    if (line.includes('Initialization Sequence Completed')) {
-      connected = true;
-      if (connectionTimer) clearTimeout(connectionTimer);
-      connectionTimer = null;
-      await discoverVpnInterface();
-      spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
-      send('state', { state: 'connected', message: 'Discord iniciado pelo Japão' });
-    }
-    if (/Exiting due to fatal error|AUTH_FAILED|TLS Error/.test(line) && !connected) {
-      if (connectionTimer) clearTimeout(connectionTimer);
-      connectionTimer = null;
-      send('state', { state: 'idle', message: 'Falha no servidor — escolha outro' });
-    }
-  });
-  vpnProcess.stderr.on('data', data => send('log', data.toString().trim()));
-  vpnProcess.on('exit', code => { vpnProcess = null; if (code !== null) send('state', { state: 'idle', message: `OpenVPN finalizado (${code})` }); });
+  }
+  if (!connectedServer) {
+    send('state', { state: 'idle', message: 'Nenhum servidor respondeu' });
+    throw new Error('Os servidores japoneses testados estão indisponíveis. Atualize a lista e tente novamente.');
+  }
+  selectedServer = connectedServer;
+  await discoverVpnInterface();
+  spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
+  send('state', { state: 'connected', message: `Discord pelo Japão — ${connectedServer.hostName}` });
   return true;
 });
 ipcMain.handle('disconnect', stopVpn);
