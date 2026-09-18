@@ -1,6 +1,6 @@
 {
   "name": "japan-discord-vpn",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "Split tunnel OpenVPN launcher for Discord",
   "main": "src/main.js",
   "author": "Andre",

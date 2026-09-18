@@ -67,9 +67,11 @@ async function fetchJapanServers() {
     .map((row, index) => {
       const ip = row.IP.replace(/[^0-9.]/g, '');
       const hostName = row.HostName.replace(/[^a-zA-Z0-9.-]/g, '');
-      return { id: `${ip}-${index}`, hostName, ip, ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, config: row.OpenVPN_ConfigData_Base64 };
+      const decoded = Buffer.from(row.OpenVPN_ConfigData_Base64, 'base64').toString('utf8');
+      const protocol = /^proto\s+(udp|tcp)/mi.exec(decoded)?.[1]?.toLowerCase() || 'tcp';
+      return { id: `${ip}-${index}`, hostName, ip, protocol, ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, config: row.OpenVPN_ConfigData_Base64 };
     })
-    .sort((a, b) => a.ping - b.ping || b.speedMbps - a.speedMbps).slice(0, 30);
+    .sort((a, b) => (a.protocol === 'udp' ? 0 : 1) - (b.protocol === 'udp' ? 0 : 1) || a.ping - b.ping || b.speedMbps - a.speedMbps).slice(0, 30);
 }
 
 function prepareServerConfig(server) {
@@ -92,7 +94,7 @@ function tryVpnServer(openVpn, server, routeIps, attempt, total) {
     send('state', { state: 'connecting', message: `Tentando servidor ${attempt} de ${total}…` });
     log(`Tentativa ${attempt}/${total}: ${server.hostName} (${server.ip})`);
     const routeArgs = routeIps.flatMap(ip => ['--route', ip, '255.255.255.255', 'vpn_gateway']);
-    const child = spawn(openVpn, ['--config', vpnConfig, '--route-nopull', '--auth-nocache', '--connect-timeout', '8', '--connect-retry-max', '1', ...routeArgs], { windowsHide: true });
+    const child = spawn(openVpn, ['--config', vpnConfig, '--route-nopull', '--auth-nocache', '--connect-timeout', '8', '--connect-retry', '2', '10', ...routeArgs], { windowsHide: true });
     vpnProcess = child;
     let settled = false;
     let connected = false;
@@ -114,6 +116,12 @@ function tryVpnServer(openVpn, server, routeIps, attempt, total) {
     const handleOutput = data => {
       const line = data.toString();
       log(line);
+      if (connected && /SIGUSR1|Restart pause|Server poll timeout|Inactivity timeout/.test(line)) {
+        send('state', { state: 'connecting', message: `Reconectando ao Japão — ${server.hostName}…` });
+      }
+      if (connected && line.includes('Initialization Sequence Completed')) {
+        send('state', { state: 'connected', message: `Discord pelo Japão — ${server.hostName}` });
+      }
       if (line.includes('Initialization Sequence Completed') && !settled) {
         settled = true;
         connected = true;
@@ -255,7 +263,9 @@ ipcMain.handle('connect', async () => {
   const initialRouteIps = await resolveDiscordIps();
   if (!initialRouteIps.length) throw new Error('Não foi possível resolver os endereços do Discord. Verifique o DNS e tente novamente.');
   const available = [...(global.availableServers?.values() || [])];
-  const candidates = [selectedServer, ...available.filter(server => server.id !== selectedServer.id)];
+  const udp = available.filter(server => server.protocol === 'udp' && server.id !== selectedServer.id);
+  const tcp = available.filter(server => server.protocol !== 'udp' && server.id !== selectedServer.id);
+  const candidates = selectedServer.protocol === 'udp' ? [selectedServer, ...udp, ...tcp] : [...udp, selectedServer, ...tcp];
   let connectedServer = null;
   for (let index = 0; index < candidates.length; index++) {
     try {

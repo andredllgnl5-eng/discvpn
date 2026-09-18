@@ -59,7 +59,7 @@ async function test(server, index) {
   const servers = lines.slice(h + 1).filter(x => !x.startsWith('*')).map(csv)
     .map(row => Object.fromEntries(headers.map((key, i) => [key, row[i] || ''])))
     .filter(x => x.CountryShort === 'JP' && x.OpenVPN_ConfigData_Base64)
-    .map(x => ({ name: x.HostName, ip: x.IP, ping: Number(x.Ping) || 9999, config: x.OpenVPN_ConfigData_Base64 }))
-    .sort((a, b) => a.ping - b.ping).slice(0, 5);
+    .map(x => { const config = x.OpenVPN_ConfigData_Base64; const decoded = Buffer.from(config, 'base64').toString('utf8'); return { name: x.HostName, ip: x.IP, ping: Number(x.Ping) || 9999, protocol: /^proto\s+udp/mi.test(decoded) ? 'udp' : 'tcp', config }; })
+    .sort((a, b) => (a.protocol === 'udp' ? 0 : 1) - (b.protocol === 'udp' ? 0 : 1) || a.ping - b.ping).slice(0, 5);
   for (let i = 0; i < servers.length; i++) await test(servers[i], i);
 })().catch(error => { console.error(error); process.exitCode = 1; });
