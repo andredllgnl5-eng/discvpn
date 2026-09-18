@@ -1,6 +1,6 @@
 {
   "name": "japan-discord-vpn",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Split tunnel OpenVPN launcher for Discord",
   "main": "src/main.js",
   "author": "Andre",
@@ -42,9 +42,11 @@
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Japan Discord VPN"
+      "shortcutName": "Japan Discord VPN",
+      "include": "build/installer.nsh"
     },
     "publish": [
       {

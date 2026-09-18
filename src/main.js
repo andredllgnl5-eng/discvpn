@@ -27,33 +27,9 @@ function findOpenVpn() {
 }
 
 async function ensureOpenVpn() {
-  let executable = findOpenVpn();
+  const executable = findOpenVpn();
   if (executable) return executable;
-  send('state', { state: 'connecting', message: 'Preparando o mecanismo OpenVPN…' });
-  send('log', 'Baixando o pacote oficial OpenVPN…');
-  const runtimeDir = path.join(app.getPath('userData'), 'runtime');
-  fs.mkdirSync(runtimeDir, { recursive: true });
-  const msiPath = path.join(runtimeDir, 'openvpn-stable-amd64.msi');
-  const response = await fetch('https://build.openvpn.net/downloads/releases/latest/openvpn-latest-stable-amd64.msi', { signal: AbortSignal.timeout(120000) });
-  if (!response.ok) throw new Error(`Falha ao baixar o OpenVPN: HTTP ${response.status}.`);
-  fs.writeFileSync(msiPath, Buffer.from(await response.arrayBuffer()));
-  const signature = await ps(`(Get-AuthenticodeSignature -LiteralPath '${msiPath.replace(/'/g, "''")}').Status`);
-  if (signature.trim() !== 'Valid') {
-    fs.rmSync(msiPath, { force: true });
-    throw new Error('A assinatura digital do instalador OpenVPN não é válida. A instalação foi cancelada.');
-  }
-  send('log', 'Assinatura validada. Instalando o OpenVPN…');
-  await new Promise((resolve, reject) => {
-    const installer = spawn('msiexec.exe', ['/i', msiPath, '/qn', '/norestart'], { windowsHide: true });
-    installer.stdout.on('data', data => send('log', data.toString().trim()));
-    installer.stderr.on('data', data => send('log', data.toString().trim()));
-    installer.on('error', reject);
-    installer.on('exit', code => (code === 0 || code === 3010) ? resolve() : reject(new Error(`A instalação automática terminou com código ${code}.`)));
-  });
-  fs.rmSync(msiPath, { force: true });
-  executable = findOpenVpn();
-  if (!executable) throw new Error('O OpenVPN foi instalado, mas ainda não foi localizado. Reinicie o aplicativo.');
-  return executable;
+  throw new Error('O componente OpenVPN integrado não foi encontrado. Reinstale o Japan Discord VPN para reparar os componentes de rede.');
 }
 
 function parseCsvLine(line) {
