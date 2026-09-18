@@ -212,6 +212,16 @@ async function resolveDiscordIps() {
   return [];
 }
 
+async function resolveCompatibilityIps() {
+  const hosts = ['discord.com', 'discord.gg', 'gateway.discord.gg', 'cdn.discordapp.com', 'media.discordapp.net', 'discordapp.com', 'latency.discord.media'];
+  const found = new Set();
+  try {
+    const raw = await ps(`$hosts=@(${hosts.map(x => `'${x}'`).join(',')}); foreach($h in $hosts){[System.Net.Dns]::GetHostAddresses($h) | Where-Object {$_.AddressFamily -eq 'InterNetwork'} | ForEach-Object {$_.IPAddressToString}}`);
+    raw.split(/\r?\n/).map(x => x.trim()).filter(x => /^\d+\.\d+\.\d+\.\d+$/.test(x)).forEach(ip => found.add(ip));
+  } catch (error) { log(`DNS de compatibilidade: ${error.message}`); }
+  return [...found];
+}
+
 function testTunnelQuality() {
   return new Promise(resolve => {
     execFile('ping.exe', ['-4', '-n', '5', '-w', '1200', '1.1.1.1'], { windowsHide: true, timeout: 9000 }, (_error, stdout = '') => {
@@ -426,12 +436,14 @@ ipcMain.handle('select-server', (_, id) => {
 });
 ipcMain.handle('connect', async (_, options = {}) => {
   const fullTunnel = false;
+  const compatibility = options.compatibility === true;
   const openVpn = await ensureOpenVpn();
   const discord = await findDiscord();
   if (!discord) throw new Error('Discord não encontrado. Instale a versão desktop.');
   if (!selectedServer) throw new Error('Selecione um servidor dos Estados Unidos ou Canadá.');
   await stopVpn();
-  const initialRouteIps = fullTunnel ? [] : await resolveDiscordIps();
+  const initialRouteIps = compatibility ? await resolveCompatibilityIps() : await resolveDiscordIps();
+  if (compatibility && !initialRouteIps.length) throw new Error('Não foi possível preparar o modo de compatibilidade. Verifique o DNS.');
   const available = [...(global.availableServers?.values() || [])];
   const udp = available.filter(server => server.protocol === 'udp' && server.id !== selectedServer.id);
   const tcp = available.filter(server => server.protocol !== 'udp' && server.id !== selectedServer.id);
@@ -440,6 +452,20 @@ ipcMain.handle('connect', async (_, options = {}) => {
   for (let index = 0; index < candidates.length; index++) {
     try {
       connectedServer = await tryVpnServer(openVpn, candidates[index], initialRouteIps, fullTunnel, index + 1, candidates.length);
+      if (compatibility) {
+        send('state', { state: 'connecting', message: `Testando transmissão — ${connectedServer.hostName}…` });
+        await wait(700);
+        const rtc = await verifyDiscordRtc();
+        log(`Compatibilidade RTC ${connectedServer.hostName}: ${rtc.valid ? 'OK' : 'BLOQUEADA'} (${rtc.target})`);
+        if (!rtc.valid) {
+          const blockedProcess = vpnProcess;
+          vpnProcess = null;
+          if (blockedProcess && !blockedProcess.killed) blockedProcess.kill();
+          connectedServer = null;
+          await wait(1400);
+          continue;
+        }
+      }
       if (fullTunnel) {
         send('state', { state: 'connecting', message: `Testando estabilidade — ${connectedServer.hostName}…` });
         await wait(1200);
@@ -498,7 +524,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
   spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
   await monitorDiscordRoutes();
   monitorTimer = setInterval(() => monitorDiscordRoutes().catch(error => log(`Monitor do Discord: ${error.message}`)), 250);
-  send('state', { state: 'connected', message: `Discord pela América do Norte — ${connectedServer.hostName}` });
+  send('state', { state: 'connected', message: `${compatibility ? 'Compatibilidade ativa' : 'Discord pela América do Norte'} — ${connectedServer.hostName}` });
   return true;
 });
 ipcMain.handle('disconnect', stopVpn);

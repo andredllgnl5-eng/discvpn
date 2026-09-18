@@ -8,7 +8,7 @@
     <div class="server-head"><div><label>Servidores na América do Norte</label><small>VPN Gate + VPNBook · troca automática em caso de falha</small></div><button id="refresh">Atualizar</button></div>
     <div id="servers" class="servers"><div class="loading">Buscando servidores norte-americanos…</div></div>
   </section>
-  <div class="mode"><span><strong>Somente Discord</strong><small>O PC, jogos e outros aplicativos permanecem na conexão normal. Endereços de voz e transmissão são detectados e adicionados automaticamente.</small></span></div>
+  <label class="mode"><input id="compatibility-mode" type="checkbox"><span><strong>Modo de compatibilidade (erro 2012)</strong><small>Use se a transmissão não iniciar. Mantém sinalização, voz e vídeo do Discord na mesma rota VPN; o restante do PC continua no Brasil.</small></span></label>
   <button class="primary" id="connect" disabled>Conectar e abrir Discord</button><button class="secondary" id="disconnect" disabled>Desconectar</button>
   <details><summary>Diagnóstico</summary><pre id="log">Pronto.</pre></details>
   <p class="note">Somente endereços usados pelo Discord entram no túnel norte-americano. A conexão geral do computador permanece no Brasil.</p>
