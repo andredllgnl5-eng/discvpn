@@ -271,7 +271,11 @@ ipcMain.handle('connect', async () => {
   }
   selectedServer = connectedServer;
   send('stats', { routes: initialRouteIps.length });
-  await ps("Get-Process Discord -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue");
+  try {
+    await ps("Get-Process Discord -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; exit 0");
+  } catch (error) {
+    log(`Aviso ao reiniciar Discord: ${error.message}`);
+  }
   spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
   send('state', { state: 'connected', message: `Discord pelo Japão — ${connectedServer.hostName}` });
   return true;
