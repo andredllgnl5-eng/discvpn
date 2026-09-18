@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const tls = require('node:tls');
 const crypto = require('node:crypto');
+const dns = require('node:dns').promises;
 const { autoUpdater } = require('electron-updater');
 
 let win;
@@ -11,7 +12,10 @@ let vpnProcess = null;
 let monitorTimer = null;
 let selectedServer = null;
 let vpnInterface = '';
+let vpnGateway = '';
+let vpnClientIp = '';
 let connectionTimer = null;
+let monitorBusy = false;
 const addedRoutes = new Set();
 
 const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send(type, payload);
@@ -156,6 +160,11 @@ function tryVpnServer(openVpn, server, routeIps, fullTunnel, attempt, total) {
     const handleOutput = data => {
       const line = data.toString();
       log(line);
+      const ifconfig = /(?:^|[,\s])ifconfig\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)/i.exec(line);
+      if (ifconfig) {
+        vpnClientIp = ifconfig[1];
+        vpnGateway = ifconfig[2];
+      }
       if (connected && /SIGUSR1|Restart pause|Server poll timeout|Inactivity timeout/.test(line)) {
         send('state', { state: 'connecting', message: `Reconectando à América do Norte — ${server.hostName}…` });
       }
@@ -196,7 +205,7 @@ async function findDiscord() {
 }
 
 async function resolveDiscordIps() {
-  const hosts = ['discord.com', 'discord.gg', 'gateway.discord.gg', 'cdn.discordapp.com', 'media.discordapp.net', 'discordapp.com'];
+  const hosts = ['discord.com', 'discord.gg', 'gateway.discord.gg', 'cdn.discordapp.com', 'media.discordapp.net', 'discordapp.com', 'latency.discord.media'];
   const found = new Set();
   try {
     const raw = await ps(`$hosts=@(${hosts.map(x => `'${x}'`).join(',')}); foreach($h in $hosts){[System.Net.Dns]::GetHostAddresses($h) | Where-Object {$_.AddressFamily -eq 'InterNetwork'} | ForEach-Object {$_.IPAddressToString}}`);
@@ -304,19 +313,20 @@ function createWindow() {
 }
 
 async function discoverVpnInterface() {
-  const output = await ps("Get-NetAdapter | Where-Object {$_.Status -eq 'Up' -and ($_.InterfaceDescription -match 'OpenVPN|TAP|Wintun|DCO' -or $_.Name -match 'OpenVPN|TAP')} | Sort-Object ifIndex -Descending | Select-Object -First 1 -ExpandProperty ifIndex");
+  const byAddress = vpnClientIp ? `Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {$_.IPAddress -eq '${vpnClientIp}'} | Select-Object -First 1 -ExpandProperty InterfaceIndex` : '';
+  const output = await ps(byAddress || "Get-NetAdapter | Where-Object {$_.Status -eq 'Up' -and ($_.InterfaceDescription -match 'OpenVPN|TAP|Wintun|DCO' -or $_.Name -match 'OpenVPN|TAP')} | Sort-Object ifIndex -Descending | Select-Object -First 1 -ExpandProperty ifIndex");
   vpnInterface = output.split(/\r?\n/)[0].trim();
   return vpnInterface;
 }
 
 async function addDiscordRoutes() {
   if (!vpnInterface) await discoverVpnInterface();
-  if (!vpnInterface) return;
+  if (!vpnInterface || !vpnGateway) return;
   const raw = await ps("$p=Get-Process Discord -ErrorAction SilentlyContinue; if($p){$ids=$p.Id; Get-NetTCPConnection -ErrorAction SilentlyContinue | Where-Object {$ids -contains $_.OwningProcess -and $_.RemoteAddress -match '^\\d+\\.\\d+\\.\\d+\\.\\d+$'} | Select-Object -ExpandProperty RemoteAddress -Unique}");
   for (const ip of raw.split(/\r?\n/).map(x => x.trim()).filter(Boolean)) {
     if (addedRoutes.has(ip)) continue;
     try {
-      await ps(`New-NetRoute -DestinationPrefix '${ip}/32' -InterfaceIndex ${vpnInterface} -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Out-Null`);
+      await ps(`New-NetRoute -DestinationPrefix '${ip}/32' -InterfaceIndex ${vpnInterface} -NextHop '${vpnGateway}' -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Out-Null`);
       addedRoutes.add(ip);
       log(`Rota protegida: ${ip}`);
     } catch (e) { log(`Não foi possível adicionar ${ip}: ${e.message}`); }
@@ -345,6 +355,43 @@ async function removeRoutes() {
   addedRoutes.clear();
 }
 
+async function addDiscordMediaRoutes() {
+  if (!vpnInterface) await discoverVpnInterface();
+  if (!vpnInterface || !vpnGateway) return;
+    const discordLog = path.join(process.env.APPDATA || '', 'discord', 'logs', 'renderer_js.log');
+    if (!fs.existsSync(discordLog)) return;
+    const content = fs.readFileSync(discordLog, 'utf8').slice(-2 * 1024 * 1024);
+    const ips = new Set();
+    for (const match of content.matchAll(/(?:RTC connected to media server:|Creating connection to)\s+(\d+\.\d+\.\d+\.\d+):\d+/gi)) ips.add(match[1]);
+    const hosts = [...content.matchAll(/wss:\/\/([a-z0-9.-]+\.discord\.media):\d+/gi)].map(match => match[1]);
+    for (const host of [...new Set(hosts)].slice(-12)) {
+      try { (await dns.resolve4(host)).forEach(ip => ips.add(ip)); } catch {}
+    }
+    for (const ip of ips) {
+      if (addedRoutes.has(ip)) continue;
+      try {
+        await ps(`New-NetRoute -DestinationPrefix '${ip}/32' -InterfaceIndex ${vpnInterface} -NextHop '${vpnGateway}' -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null`);
+        addedRoutes.add(ip);
+        log(`Rota RTC protegida: ${ip}`);
+      } catch (error) {
+        if (/already exists|já existe/i.test(error.message)) addedRoutes.add(ip);
+        else log(`Rota RTC ${ip}: ${error.message}`);
+      }
+    }
+  send('stats', { routes: addedRoutes.size, fullTunnel: false });
+}
+
+async function monitorDiscordRoutes() {
+  if (monitorBusy || !vpnProcess) return;
+  monitorBusy = true;
+  try {
+    await addDiscordMediaRoutes();
+    await addDiscordRoutes();
+  } finally {
+    monitorBusy = false;
+  }
+}
+
 async function cleanupOpenVpnNetworkState() {
   try {
     await ps("$indexes=@(Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object {$_.InterfaceDescription -match 'OpenVPN|TAP|Wintun|DCO' -or $_.Name -match 'OpenVPN|TAP|Wintun'} | Select-Object -ExpandProperty ifIndex); if($indexes.Count){Get-NetRoute -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Where-Object {$indexes -contains $_.InterfaceIndex} | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue}; Clear-DnsClientCache -ErrorAction SilentlyContinue");
@@ -368,6 +415,8 @@ async function stopVpn() {
   }
   await cleanupOpenVpnNetworkState();
   vpnInterface = '';
+  vpnGateway = '';
+  vpnClientIp = '';
   send('state', { state: 'idle', message: 'Desconectado' });
 }
 
@@ -383,7 +432,7 @@ ipcMain.handle('select-server', (_, id) => {
   return { id: selectedServer.id, hostName: selectedServer.hostName };
 });
 ipcMain.handle('connect', async (_, options = {}) => {
-  const fullTunnel = options.fullTunnel !== false;
+  const fullTunnel = false;
   const openVpn = await ensureOpenVpn();
   const discord = await findDiscord();
   if (!discord) throw new Error('Discord não encontrado. Instale a versão desktop.');
@@ -394,7 +443,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
   const available = [...(global.availableServers?.values() || [])];
   const udp = available.filter(server => server.protocol === 'udp' && server.id !== selectedServer.id);
   const tcp = available.filter(server => server.protocol !== 'udp' && server.id !== selectedServer.id);
-  const candidates = selectedServer.protocol === 'udp' ? [selectedServer, ...udp, ...tcp] : [...udp, selectedServer, ...tcp];
+  const candidates = [selectedServer, ...udp, ...tcp].slice(0, 5);
   let connectedServer = null;
   for (let index = 0; index < candidates.length; index++) {
     try {
@@ -451,6 +500,8 @@ ipcMain.handle('connect', async (_, options = {}) => {
     log(`Aviso ao reiniciar Discord: ${error.message}`);
   }
   spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
+  await monitorDiscordRoutes();
+  monitorTimer = setInterval(() => monitorDiscordRoutes().catch(error => log(`Monitor do Discord: ${error.message}`)), 1000);
   send('state', { state: 'connected', message: `Discord pela América do Norte — ${connectedServer.hostName}` });
   return true;
 });
