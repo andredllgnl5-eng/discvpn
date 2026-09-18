@@ -66,17 +66,20 @@ async function fetchJapanServers() {
     { id: 'ca149', name: 'Canadá 1', host: 'ca149.vpnbook.com', ip: '144.217.253.149', country: 'CA' },
     { id: 'ca196', name: 'Canadá 2', host: 'ca196.vpnbook.com', ip: '142.4.216.196', country: 'CA' }
   ];
-  const protocols = ['udp25000', 'udp53'];
-  const servers = [];
-  for (const host of hosts) {
-    for (const profile of protocols) {
-      const url = `https://www.vpnbook.com/api/openvpn?hostname=${host.host}&protocol=${profile}&ip=${host.ip}`;
+  const protocols = [
+    { id: 'udp25000', label: 'UDP rápido', protocol: 'udp' },
+    { id: 'udp53', label: 'UDP alternativo', protocol: 'udp' },
+    { id: 'tcp443', label: 'TCP compatível', protocol: 'tcp' }
+  ];
+  const servers = (await Promise.all(hosts.flatMap(host => protocols.map(async profile => {
+    try {
+      const url = `https://www.vpnbook.com/api/openvpn?hostname=${host.host}&protocol=${profile.id}&ip=${host.ip}`;
       const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      if (!response.ok) continue;
+      if (!response.ok) return null;
       const config = Buffer.from(await response.arrayBuffer()).toString('base64');
-      servers.push({ id: `${host.id}-${profile}`, hostName: `${host.name} · ${profile === 'udp25000' ? 'UDP rápido' : 'UDP alternativo'}`, ip: host.ip, protocol: 'udp', ping: 0, speedMbps: 0, sessions: 0, score: 0, username: 'vpnbook', password, config });
-    }
-  }
+      return { id: `${host.id}-${profile.id}`, hostName: `${host.name} · ${profile.label}`, ip: host.ip, protocol: profile.protocol, ping: 0, speedMbps: 0, sessions: 0, score: 0, username: 'vpnbook', password, config };
+    } catch { return null; }
+  })))).filter(Boolean);
   if (!servers.length) throw new Error('Nenhum servidor da América do Norte respondeu.');
   return servers;
 }
@@ -89,8 +92,14 @@ function prepareServerConfig(server) {
   fs.writeFileSync(authPath, `${server.username || 'vpn'}\n${server.password || 'vpn'}\n`, { mode: 0o600 });
   const escapedAuthPath = authPath.replace(/\\/g, '\\\\');
   let config = Buffer.from(server.config, 'base64').toString('utf8');
+  config = config
+    .replace(/^redirect-gateway.*$/gmi, '')
+    .replace(/^block-outside-dns.*$/gmi, '')
+    .replace(/^tun-mtu.*$/gmi, '')
+    .replace(/^mssfix.*$/gmi, '');
   if (/^auth-user-pass.*$/m.test(config)) config = config.replace(/^auth-user-pass.*$/m, `auth-user-pass "${escapedAuthPath}"`);
   else config += `\nauth-user-pass "${escapedAuthPath}"\n`;
+  config += '\npull-filter ignore "redirect-gateway"\npull-filter ignore "block-outside-dns"\ntun-mtu 1400\nmssfix 1360\n';
   fs.writeFileSync(configPath, config, 'utf8');
   return configPath;
 }
@@ -101,7 +110,7 @@ function tryVpnServer(openVpn, server, routeIps, fullTunnel, attempt, total) {
     send('state', { state: 'connecting', message: `Tentando servidor ${attempt} de ${total}…` });
     log(`Tentativa ${attempt}/${total}: ${server.hostName} (${server.ip})`);
     const routeArgs = fullTunnel ? ['--redirect-gateway', 'def1'] : ['--route-nopull', ...routeIps.flatMap(ip => ['--route', ip, '255.255.255.255', 'vpn_gateway'])];
-    const child = spawn(openVpn, ['--config', vpnConfig, '--auth-nocache', '--connect-timeout', '8', '--connect-retry', '2', '10', ...routeArgs], { windowsHide: true });
+    const child = spawn(openVpn, ['--config', vpnConfig, '--auth-nocache', '--disable-dco', '--connect-timeout', '8', '--connect-retry', '2', '10', '--ping', '10', '--ping-restart', '45', ...routeArgs], { windowsHide: true });
     vpnProcess = child;
     let settled = false;
     let connected = false;
@@ -182,6 +191,19 @@ async function resolveDiscordIps() {
   }
   return [...found];
 }
+
+function testTunnelQuality() {
+  return new Promise(resolve => {
+    execFile('ping.exe', ['-4', '-n', '5', '-w', '1200', '1.1.1.1'], { windowsHide: true, timeout: 9000 }, (_error, stdout = '') => {
+      const replies = (stdout.match(/TTL=/gi) || []).length;
+      const samples = [...stdout.matchAll(/[=<]\s*(\d+)\s*ms/gi)].map(match => Number(match[1])).filter(Number.isFinite);
+      const latency = samples.length ? Math.round(samples.reduce((sum, value) => sum + value, 0) / samples.length) : 9999;
+      resolve({ replies, sent: 5, loss: Math.round((1 - replies / 5) * 100), latency, healthy: replies >= 4 && latency <= 260 });
+    });
+  });
+}
+
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function createWindow() {
   win = new BrowserWindow({
@@ -278,6 +300,20 @@ ipcMain.handle('connect', async (_, options = {}) => {
   for (let index = 0; index < candidates.length; index++) {
     try {
       connectedServer = await tryVpnServer(openVpn, candidates[index], initialRouteIps, fullTunnel, index + 1, candidates.length);
+      if (fullTunnel) {
+        send('state', { state: 'connecting', message: `Testando estabilidade — ${connectedServer.hostName}…` });
+        await wait(1200);
+        const quality = await testTunnelQuality();
+        log(`Qualidade ${connectedServer.hostName}: ${quality.latency} ms, ${quality.loss}% de perda (${quality.replies}/${quality.sent})`);
+        if (!quality.healthy) {
+          const unstableProcess = vpnProcess;
+          vpnProcess = null;
+          if (unstableProcess && !unstableProcess.killed) unstableProcess.kill();
+          connectedServer = null;
+          await wait(1800);
+          continue;
+        }
+      }
       break;
     } catch (error) {
       log(`${candidates[index].hostName} indisponível: ${error.message}`);

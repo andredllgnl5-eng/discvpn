@@ -1,6 +1,6 @@
 {
   "name": "japan-discord-vpn",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "North America OpenVPN launcher for Discord",
   "main": "src/main.js",
   "author": "Andre",
