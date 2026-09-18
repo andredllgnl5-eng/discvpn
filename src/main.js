@@ -2,7 +2,6 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const dns = require('node:dns').promises;
 const { autoUpdater } = require('electron-updater');
 
 let win;
@@ -150,8 +149,23 @@ async function findDiscord() {
 
 async function resolveDiscordIps() {
   const hosts = ['discord.com', 'discord.gg', 'gateway.discord.gg', 'cdn.discordapp.com', 'media.discordapp.net', 'discordapp.com'];
-  const results = await Promise.allSettled(hosts.map(host => dns.resolve4(host)));
-  return [...new Set(results.flatMap(result => result.status === 'fulfilled' ? result.value : []))];
+  const found = new Set();
+  try {
+    const raw = await ps(`$hosts=@(${hosts.map(x => `'${x}'`).join(',')}); foreach($h in $hosts){[System.Net.Dns]::GetHostAddresses($h) | Where-Object {$_.AddressFamily -eq 'InterNetwork'} | ForEach-Object {$_.IPAddressToString}}`);
+    raw.split(/\r?\n/).map(x => x.trim()).filter(x => /^\d+\.\d+\.\d+\.\d+$/.test(x)).forEach(ip => found.add(ip));
+  } catch (error) { log(`DNS do Windows: ${error.message}`); }
+  if (!found.size) {
+    for (const host of hosts) {
+      try {
+        const response = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`, {
+          headers: { accept: 'application/dns-json' }, signal: AbortSignal.timeout(5000)
+        });
+        const data = await response.json();
+        for (const answer of data.Answer || []) if (/^\d+\.\d+\.\d+\.\d+$/.test(answer.data)) found.add(answer.data);
+      } catch {}
+    }
+  }
+  return [...found];
 }
 
 function createWindow() {
