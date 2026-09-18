@@ -9,6 +9,7 @@ let vpnProcess = null;
 let monitorTimer = null;
 let selectedServer = null;
 let vpnInterface = '';
+let connectionTimer = null;
 const addedRoutes = new Set();
 
 const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send(type, payload);
@@ -146,6 +147,8 @@ async function removeRoutes() {
 }
 
 async function stopVpn() {
+  if (connectionTimer) clearTimeout(connectionTimer);
+  connectionTimer = null;
   if (monitorTimer) clearInterval(monitorTimer);
   monitorTimer = null;
   await removeRoutes();
@@ -173,16 +176,31 @@ ipcMain.handle('connect', async () => {
   const vpnConfig = prepareServerConfig(selectedServer);
   await stopVpn();
   send('state', { state: 'connecting', message: 'Conectando ao Japão…' });
-  vpnProcess = spawn(openVpn, ['--config', vpnConfig, '--route-nopull', '--auth-nocache'], { windowsHide: true });
+  await ps("Get-Process Discord -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue");
+  vpnProcess = spawn(openVpn, ['--config', vpnConfig, '--auth-nocache', '--connect-timeout', '15', '--connect-retry-max', '2'], { windowsHide: true });
+  let connected = false;
+  connectionTimer = setTimeout(() => {
+    if (!connected && vpnProcess) {
+      vpnProcess.kill();
+      vpnProcess = null;
+      send('state', { state: 'idle', message: 'Servidor indisponível — escolha outro' });
+      send('log', 'Tempo limite de conexão atingido. Selecione outro servidor japonês.');
+    }
+  }, 35000);
   vpnProcess.stdout.on('data', async data => {
     const line = data.toString(); send('log', line.trim());
     if (line.includes('Initialization Sequence Completed')) {
+      connected = true;
+      if (connectionTimer) clearTimeout(connectionTimer);
+      connectionTimer = null;
       await discoverVpnInterface();
-      await addKnownDiscordRoutes();
       spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
-      setTimeout(addDiscordRoutes, 3500);
-      monitorTimer = setInterval(addDiscordRoutes, 5000);
-      send('state', { state: 'connected', message: 'Discord conectado via Japão' });
+      send('state', { state: 'connected', message: 'Discord iniciado pelo Japão' });
+    }
+    if (/Exiting due to fatal error|AUTH_FAILED|TLS Error/.test(line) && !connected) {
+      if (connectionTimer) clearTimeout(connectionTimer);
+      connectionTimer = null;
+      send('state', { state: 'idle', message: 'Falha no servidor — escolha outro' });
     }
   });
   vpnProcess.stderr.on('data', data => send('log', data.toString().trim()));
