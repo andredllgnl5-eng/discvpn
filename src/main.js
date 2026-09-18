@@ -4,7 +4,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const tls = require('node:tls');
 const crypto = require('node:crypto');
-const dns = require('node:dns').promises;
 const { autoUpdater } = require('electron-updater');
 
 let win;
@@ -16,6 +15,7 @@ let vpnGateway = '';
 let vpnClientIp = '';
 let connectionTimer = null;
 let monitorBusy = false;
+let discordLogPosition = 0;
 const addedRoutes = new Set();
 
 const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send(type, payload);
@@ -205,24 +205,11 @@ async function findDiscord() {
 }
 
 async function resolveDiscordIps() {
-  const hosts = ['discord.com', 'discord.gg', 'gateway.discord.gg', 'cdn.discordapp.com', 'media.discordapp.net', 'discordapp.com', 'latency.discord.media'];
-  const found = new Set();
-  try {
-    const raw = await ps(`$hosts=@(${hosts.map(x => `'${x}'`).join(',')}); foreach($h in $hosts){[System.Net.Dns]::GetHostAddresses($h) | Where-Object {$_.AddressFamily -eq 'InterNetwork'} | ForEach-Object {$_.IPAddressToString}}`);
-    raw.split(/\r?\n/).map(x => x.trim()).filter(x => /^\d+\.\d+\.\d+\.\d+$/.test(x)).forEach(ip => found.add(ip));
-  } catch (error) { log(`DNS do Windows: ${error.message}`); }
-  if (!found.size) {
-    for (const host of hosts) {
-      try {
-        const response = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`, {
-          headers: { accept: 'application/dns-json' }, signal: AbortSignal.timeout(5000)
-        });
-        const data = await response.json();
-        for (const answer of data.Answer || []) if (/^\d+\.\d+\.\d+\.\d+$/.test(answer.data)) found.add(answer.data);
-      } catch {}
-    }
-  }
-  return [...found];
+  // Keep Discord's control WebSockets on the normal connection. Free VPN
+  // exits commonly block their alternate TCP ports (2053/2087/2096/8443),
+  // which leaves voice connected but makes streams black. Only concrete UDP
+  // media IPs discovered in the Discord log are routed through OpenVPN.
+  return [];
 }
 
 function testTunnelQuality() {
@@ -360,13 +347,19 @@ async function addDiscordMediaRoutes() {
   if (!vpnInterface || !vpnGateway) return;
     const discordLog = path.join(process.env.APPDATA || '', 'discord', 'logs', 'renderer_js.log');
     if (!fs.existsSync(discordLog)) return;
-    const content = fs.readFileSync(discordLog, 'utf8').slice(-2 * 1024 * 1024);
+    const size = fs.statSync(discordLog).size;
+    if (size < discordLogPosition) discordLogPosition = 0;
+    if (size === discordLogPosition) return;
+    const length = Math.min(size - discordLogPosition, 512 * 1024);
+    const start = Math.max(discordLogPosition, size - length);
+    const handle = fs.openSync(discordLog, 'r');
+    const buffer = Buffer.alloc(size - start);
+    fs.readSync(handle, buffer, 0, buffer.length, start);
+    fs.closeSync(handle);
+    discordLogPosition = size;
+    const content = buffer.toString('utf8');
     const ips = new Set();
     for (const match of content.matchAll(/(?:RTC connected to media server:|Creating connection to)\s+(\d+\.\d+\.\d+\.\d+):\d+/gi)) ips.add(match[1]);
-    const hosts = [...content.matchAll(/wss:\/\/([a-z0-9.-]+\.discord\.media):\d+/gi)].map(match => match[1]);
-    for (const host of [...new Set(hosts)].slice(-12)) {
-      try { (await dns.resolve4(host)).forEach(ip => ips.add(ip)); } catch {}
-    }
     for (const ip of ips) {
       if (addedRoutes.has(ip)) continue;
       try {
@@ -386,7 +379,6 @@ async function monitorDiscordRoutes() {
   monitorBusy = true;
   try {
     await addDiscordMediaRoutes();
-    await addDiscordRoutes();
   } finally {
     monitorBusy = false;
   }
@@ -417,6 +409,7 @@ async function stopVpn() {
   vpnInterface = '';
   vpnGateway = '';
   vpnClientIp = '';
+  discordLogPosition = 0;
   send('state', { state: 'idle', message: 'Desconectado' });
 }
 
@@ -439,7 +432,6 @@ ipcMain.handle('connect', async (_, options = {}) => {
   if (!selectedServer) throw new Error('Selecione um servidor dos Estados Unidos ou Canadá.');
   await stopVpn();
   const initialRouteIps = fullTunnel ? [] : await resolveDiscordIps();
-  if (!fullTunnel && !initialRouteIps.length) throw new Error('Não foi possível resolver os endereços do Discord. Verifique o DNS e tente novamente.');
   const available = [...(global.availableServers?.values() || [])];
   const udp = available.filter(server => server.protocol === 'udp' && server.id !== selectedServer.id);
   const tcp = available.filter(server => server.protocol !== 'udp' && server.id !== selectedServer.id);
@@ -499,9 +491,13 @@ ipcMain.handle('connect', async (_, options = {}) => {
   } catch (error) {
     log(`Aviso ao reiniciar Discord: ${error.message}`);
   }
+  const discordLog = path.join(process.env.APPDATA || '', 'discord', 'logs', 'renderer_js.log');
+  // Seed recently used media IPs, but never the *.discord.media WebSocket
+  // hosts. This gives UDP voice/video a route before the first media packet.
+  discordLogPosition = fs.existsSync(discordLog) ? Math.max(0, fs.statSync(discordLog).size - 512 * 1024) : 0;
   spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
   await monitorDiscordRoutes();
-  monitorTimer = setInterval(() => monitorDiscordRoutes().catch(error => log(`Monitor do Discord: ${error.message}`)), 1000);
+  monitorTimer = setInterval(() => monitorDiscordRoutes().catch(error => log(`Monitor do Discord: ${error.message}`)), 250);
   send('state', { state: 'connected', message: `Discord pela América do Norte — ${connectedServer.hostName}` });
   return true;
 });
