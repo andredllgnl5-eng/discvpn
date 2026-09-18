@@ -2,6 +2,8 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const tls = require('node:tls');
+const crypto = require('node:crypto');
 const { autoUpdater } = require('electron-updater');
 
 let win;
@@ -241,6 +243,50 @@ async function verifyNorthAmericaExit() {
   return { valid: false, country: '', ip: '' };
 }
 
+function latestDiscordRtcTargets() {
+  try {
+    const discordLog = path.join(process.env.APPDATA || '', 'discord', 'logs', 'renderer_js.log');
+    if (!fs.existsSync(discordLog)) return [];
+    const content = fs.readFileSync(discordLog, 'utf8').slice(-1024 * 1024);
+    const targets = [...content.matchAll(/wss:\/\/([a-z0-9.-]+\.discord\.media):(\d+)/gi)]
+      .map(match => ({ host: match[1], port: Number(match[2]) }))
+      .reverse();
+    return targets.filter((target, index, list) => index === list.findIndex(item => item.host === target.host && item.port === target.port)).slice(0, 4);
+  } catch (error) {
+    log(`Leitura RTC: ${error.message}`);
+    return [];
+  }
+}
+
+function canConnectRtc(host, port, timeout = 7000) {
+  return new Promise(resolve => {
+    const socket = tls.connect({ host, port, servername: host, rejectUnauthorized: true });
+    let settled = false;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(timeout, () => finish(false));
+    socket.once('secureConnect', () => {
+      const key = crypto.randomBytes(16).toString('base64');
+      socket.write(`GET /?v=9 HTTP/1.1\r\nHost: ${host}:${port}\r\nOrigin: https://discord.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+    });
+    socket.on('data', data => finish(/HTTP\/1\.1 101/i.test(data.toString('utf8'))));
+    socket.once('error', () => finish(false));
+  });
+}
+
+async function verifyDiscordRtc() {
+  const targets = latestDiscordRtcTargets();
+  if (!targets.length) return { valid: true, target: 'sem histórico RTC' };
+  const results = await Promise.all(targets.map(target => canConnectRtc(target.host, target.port)));
+  const reachableIndex = results.findIndex(Boolean);
+  if (reachableIndex >= 0) return { valid: true, target: `${targets[reachableIndex].host}:${targets[reachableIndex].port}` };
+  return { valid: false, target: targets.map(target => `${target.host}:${target.port}`).join(', ') };
+}
+
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function createWindow() {
@@ -372,6 +418,17 @@ ipcMain.handle('connect', async (_, options = {}) => {
           const invalidProcess = vpnProcess;
           vpnProcess = null;
           if (invalidProcess && !invalidProcess.killed) invalidProcess.kill();
+          connectedServer = null;
+          await wait(1800);
+          continue;
+        }
+        send('state', { state: 'connecting', message: `Testando voz e transmissão — ${connectedServer.hostName}…` });
+        const rtc = await verifyDiscordRtc();
+        log(`Teste RTC ${connectedServer.hostName}: ${rtc.valid ? 'OK' : 'BLOQUEADO'} (${rtc.target})`);
+        if (!rtc.valid) {
+          const blockedProcess = vpnProcess;
+          vpnProcess = null;
+          if (blockedProcess && !blockedProcess.killed) blockedProcess.kill();
           connectedServer = null;
           await wait(1800);
           continue;
