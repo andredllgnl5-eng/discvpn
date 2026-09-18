@@ -213,13 +213,19 @@ async function resolveDiscordIps() {
 }
 
 async function resolveCompatibilityIps() {
-  const hosts = ['discord.com', 'discord.gg', 'gateway.discord.gg', 'cdn.discordapp.com', 'media.discordapp.net', 'discordapp.com', 'latency.discord.media'];
+  const hosts = ['discord.com', 'discord.gg', 'gateway.discord.gg', 'cdn.discordapp.com', 'media.discordapp.net', 'discordapp.com'];
   const found = new Set();
+  const rtcControl = new Set();
   try {
     const raw = await ps(`$hosts=@(${hosts.map(x => `'${x}'`).join(',')}); foreach($h in $hosts){[System.Net.Dns]::GetHostAddresses($h) | Where-Object {$_.AddressFamily -eq 'InterNetwork'} | ForEach-Object {$_.IPAddressToString}}`);
     raw.split(/\r?\n/).map(x => x.trim()).filter(x => /^\d+\.\d+\.\d+\.\d+$/.test(x)).forEach(ip => found.add(ip));
+    const rtcRaw = await ps("[System.Net.Dns]::GetHostAddresses('latency.discord.media') | Where-Object {$_.AddressFamily -eq 'InterNetwork'} | ForEach-Object {$_.IPAddressToString}");
+    rtcRaw.split(/\r?\n/).map(x => x.trim()).filter(Boolean).forEach(ip => rtcControl.add(ip));
   } catch (error) { log(`DNS de compatibilidade: ${error.message}`); }
-  return [...found];
+  // RTC WebSockets must stay direct because free VPN exits block Discord's
+  // alternate TLS ports. The main gateway still uses the NA tunnel and picks
+  // an NA voice region; concrete UDP media IPs are tunneled separately.
+  return [...found].filter(ip => !rtcControl.has(ip));
 }
 
 function testTunnelQuality() {
@@ -452,20 +458,6 @@ ipcMain.handle('connect', async (_, options = {}) => {
   for (let index = 0; index < candidates.length; index++) {
     try {
       connectedServer = await tryVpnServer(openVpn, candidates[index], initialRouteIps, fullTunnel, index + 1, candidates.length);
-      if (compatibility) {
-        send('state', { state: 'connecting', message: `Testando transmissão — ${connectedServer.hostName}…` });
-        await wait(700);
-        const rtc = await verifyDiscordRtc();
-        log(`Compatibilidade RTC ${connectedServer.hostName}: ${rtc.valid ? 'OK' : 'BLOQUEADA'} (${rtc.target})`);
-        if (!rtc.valid) {
-          const blockedProcess = vpnProcess;
-          vpnProcess = null;
-          if (blockedProcess && !blockedProcess.killed) blockedProcess.kill();
-          connectedServer = null;
-          await wait(1400);
-          continue;
-        }
-      }
       if (fullTunnel) {
         send('state', { state: 'connecting', message: `Testando estabilidade — ${connectedServer.hostName}…` });
         await wait(1200);
