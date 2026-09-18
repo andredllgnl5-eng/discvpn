@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const dns = require('node:dns').promises;
 const { autoUpdater } = require('electron-updater');
 
 let win;
@@ -13,6 +14,13 @@ let connectionTimer = null;
 const addedRoutes = new Set();
 
 const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send(type, payload);
+const logFile = () => path.join(app.getPath('userData'), 'japan-discord-vpn.log');
+function log(message) {
+  const clean = String(message || '').trim();
+  if (!clean) return;
+  send('log', clean);
+  try { fs.appendFileSync(logFile(), `[${new Date().toISOString()}] ${clean}\n`, 'utf8'); } catch {}
+}
 
 function ps(script) {
   return new Promise((resolve, reject) => {
@@ -79,27 +87,34 @@ function prepareServerConfig(server) {
   return configPath;
 }
 
-function tryVpnServer(openVpn, server, attempt, total) {
+function tryVpnServer(openVpn, server, routeIps, attempt, total) {
   return new Promise((resolve, reject) => {
     const vpnConfig = prepareServerConfig(server);
     send('state', { state: 'connecting', message: `Tentando servidor ${attempt} de ${total}…` });
-    send('log', `Tentativa ${attempt}/${total}: ${server.hostName} (${server.ip})`);
-    const child = spawn(openVpn, ['--config', vpnConfig, '--auth-nocache', '--connect-timeout', '8', '--connect-retry-max', '1'], { windowsHide: true });
+    log(`Tentativa ${attempt}/${total}: ${server.hostName} (${server.ip})`);
+    const routeArgs = routeIps.flatMap(ip => ['--route', ip, '255.255.255.255', 'vpn_gateway']);
+    const child = spawn(openVpn, ['--config', vpnConfig, '--route-nopull', '--auth-nocache', '--connect-timeout', '8', '--connect-retry-max', '1', ...routeArgs], { windowsHide: true });
     vpnProcess = child;
     let settled = false;
     let connected = false;
-    const timer = setTimeout(() => fail('tempo limite'), 16000);
+    let failureReason = '';
+    const timer = setTimeout(() => fail('tempo limite'), 22000);
     const fail = reason => {
       if (settled) return;
-      settled = true;
+      failureReason = reason;
       clearTimeout(timer);
       if (!child.killed) child.kill();
+      setTimeout(() => finishFailure(), 2500).unref();
+    };
+    const finishFailure = () => {
+      if (settled) return;
+      settled = true;
       if (vpnProcess === child) vpnProcess = null;
-      reject(new Error(reason));
+      reject(new Error(failureReason || 'OpenVPN foi encerrado'));
     };
     const handleOutput = data => {
       const line = data.toString();
-      send('log', line.trim());
+      log(line);
       if (line.includes('Initialization Sequence Completed') && !settled) {
         settled = true;
         connected = true;
@@ -113,7 +128,7 @@ function tryVpnServer(openVpn, server, attempt, total) {
     child.stderr.on('data', handleOutput);
     child.on('error', error => fail(error.message));
     child.on('exit', code => {
-      if (!connected) fail(`OpenVPN finalizado (${code})`);
+      if (!connected) { failureReason ||= `OpenVPN finalizado (${code})`; finishFailure(); }
       else if (vpnProcess === child) {
         vpnProcess = null;
         send('state', { state: 'idle', message: `OpenVPN finalizado (${code})` });
@@ -131,6 +146,12 @@ async function findDiscord() {
     if (fs.existsSync(exe)) return exe;
   }
   return '';
+}
+
+async function resolveDiscordIps() {
+  const hosts = ['discord.com', 'discord.gg', 'gateway.discord.gg', 'cdn.discordapp.com', 'media.discordapp.net', 'discordapp.com'];
+  const results = await Promise.allSettled(hosts.map(host => dns.resolve4(host)));
+  return [...new Set(results.flatMap(result => result.status === 'fulfilled' ? result.value : []))];
 }
 
 function createWindow() {
@@ -162,8 +183,8 @@ async function addDiscordRoutes() {
     try {
       await ps(`New-NetRoute -DestinationPrefix '${ip}/32' -InterfaceIndex ${vpnInterface} -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Out-Null`);
       addedRoutes.add(ip);
-      send('log', `Rota protegida: ${ip}`);
-    } catch (e) { send('log', `Não foi possível adicionar ${ip}: ${e.message}`); }
+      log(`Rota protegida: ${ip}`);
+    } catch (e) { log(`Não foi possível adicionar ${ip}: ${e.message}`); }
   }
   send('stats', { routes: addedRoutes.size });
 }
@@ -177,8 +198,8 @@ async function addKnownDiscordRoutes() {
     try {
       await ps(`New-NetRoute -DestinationPrefix '${ip}/32' -InterfaceIndex ${vpnInterface} -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Out-Null`);
       addedRoutes.add(ip);
-      send('log', `Rota inicial protegida: ${ip}`);
-    } catch (e) { send('log', `Não foi possível adicionar ${ip}: ${e.message}`); }
+      log(`Rota inicial protegida: ${ip}`);
+    } catch (e) { log(`Não foi possível adicionar ${ip}: ${e.message}`); }
   }
 }
 
@@ -217,16 +238,17 @@ ipcMain.handle('connect', async () => {
   if (!discord) throw new Error('Discord não encontrado. Instale a versão desktop.');
   if (!selectedServer) throw new Error('Selecione um servidor japonês.');
   await stopVpn();
-  await ps("Get-Process Discord -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue");
+  const initialRouteIps = await resolveDiscordIps();
+  if (!initialRouteIps.length) throw new Error('Não foi possível resolver os endereços do Discord. Verifique o DNS e tente novamente.');
   const available = [...(global.availableServers?.values() || [])];
-  const candidates = [selectedServer, ...available.filter(server => server.id !== selectedServer.id)].slice(0, 5);
+  const candidates = [selectedServer, ...available.filter(server => server.id !== selectedServer.id)];
   let connectedServer = null;
   for (let index = 0; index < candidates.length; index++) {
     try {
-      connectedServer = await tryVpnServer(openVpn, candidates[index], index + 1, candidates.length);
+      connectedServer = await tryVpnServer(openVpn, candidates[index], initialRouteIps, index + 1, candidates.length);
       break;
     } catch (error) {
-      send('log', `${candidates[index].hostName} indisponível: ${error.message}`);
+      log(`${candidates[index].hostName} indisponível: ${error.message}`);
     }
   }
   if (!connectedServer) {
@@ -235,7 +257,11 @@ ipcMain.handle('connect', async () => {
   }
   selectedServer = connectedServer;
   await discoverVpnInterface();
+  initialRouteIps.forEach(ip => addedRoutes.add(ip));
+  send('stats', { routes: addedRoutes.size });
+  await ps("Get-Process Discord -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue");
   spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
+  monitorTimer = setInterval(() => addDiscordRoutes().catch(error => log(`Monitor de rotas: ${error.message}`)), 3000);
   send('state', { state: 'connected', message: `Discord pelo Japão — ${connectedServer.hostName}` });
   return true;
 });

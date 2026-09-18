@@ -12,7 +12,7 @@ Aplicativo Electron para abrir o Discord com rotas dinâmicas via uma conexão O
 
 O aplicativo consulta a lista pública do VPN Gate, filtra servidores japoneses com OpenVPN e permite escolher pelo ping e velocidade. O instalador oficial e assinado do OpenVPN está incorporado ao instalador do Japan Discord VPN e prepara silenciosamente o mecanismo e o driver de rede. Não é preciso baixar o OpenVPN nem selecionar arquivos `.ovpn`.
 
-O aplicativo encerra processos existentes do Discord, estabelece o túnel japonês e só então reabre o cliente. Enquanto conectado, o túnel completo permite que as verificações regionais do Discord vejam o endereço japonês. Isso pode aumentar a latência de outros aplicativos durante a conexão. A disponibilidade do compartilhamento de tela ainda depende das políticas e verificações do Discord.
+O aplicativo primeiro confirma o túnel japonês, depois encerra e reabre o Discord. As rotas iniciais do Discord são instaladas pelo próprio OpenVPN e novos destinos usados pelo processo são adicionados enquanto ele está aberto. Jogos e outros aplicativos permanecem na conexão normal.
 
 Isso reduz o impacto sobre outros aplicativos, mas não pode garantir ping inalterado no próprio Discord nem que o Discord classificará a sessão como japonesa. A região de mídia e a disponibilidade de compartilhamento de tela também dependem dos servidores e políticas do Discord.
 
