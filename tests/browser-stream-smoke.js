@@ -26,7 +26,7 @@ const docs = path.resolve(__dirname, '..', 'docs');
     });
     const page = await context.newPage();
     page.on('console', message => console.log(`share:${message.type()}:${message.text()}`));
-    await page.goto(`${base}/share.html`);
+    await page.goto(process.env.STREAM_PUBLIC === '1' ? 'https://andredllgnl5-eng.github.io/discvpn/share.html' : `${base}/share.html`);
     await page.locator('#start').click();
     try { await page.waitForFunction(() => document.querySelector('#link')?.value.includes('watch='), null, { timeout: 25000 }); }
     catch (error) { console.log('share-status:', await page.locator('#status').textContent()); throw error; }
