@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, clipboard } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -452,6 +452,13 @@ ipcMain.handle('connect', async (_, options = {}) => {
   return true;
 });
 ipcMain.handle('disconnect', stopVpn);
+ipcMain.handle('capture-sources', async () => {
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: true });
+  return sources
+    .filter(source => !/Canada Discord VPN/i.test(source.name))
+    .map(source => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), icon: source.appIcon?.toDataURL() || '' }));
+});
+ipcMain.handle('copy-text', (_, value) => clipboard.writeText(String(value || '')));
 
 app.whenReady().then(createWindow);
 autoUpdater.autoDownload = true;

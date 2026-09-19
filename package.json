@@ -1,6 +1,6 @@
 {
   "name": "canada-discord-vpn",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "Canada OpenVPN split-tunnel launcher for Discord",
   "main": "src/main.js",
   "author": "Andre",
@@ -11,7 +11,8 @@
     "publish": "electron-builder --win nsis --publish always"
   },
   "dependencies": {
-    "electron-updater": "^6.6.2"
+    "electron-updater": "^6.6.2",
+    "peerjs": "^1.5.5"
   },
   "devDependencies": {
     "electron": "^38.1.2",
