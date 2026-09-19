@@ -1,6 +1,6 @@
 {
   "name": "canada-discord-vpn",
-  "version": "4.2.0",
+  "version": "4.2.1",
   "description": "Canada OpenVPN split-tunnel launcher for Discord",
   "main": "src/main.js",
   "author": "Andre",

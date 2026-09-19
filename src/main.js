@@ -5,6 +5,7 @@ const path = require('node:path');
 const tls = require('node:tls');
 const crypto = require('node:crypto');
 const { autoUpdater } = require('electron-updater');
+let updateReady = false;
 
 let win;
 let vpnProcess = null;
@@ -300,7 +301,7 @@ function createWindow() {
   win.setMenuBarVisibility(false);
   win.loadFile(path.join(__dirname, 'index.html'));
   win.webContents.once('did-finish-load', () => {
-    if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify().catch(error => send('log', `Atualização: ${error.message}`));
+    if (app.isPackaged) autoUpdater.checkForUpdatesAndNotify().catch(error => send('update', { message: `Falha ao verificar atualização: ${error.message}` }));
   });
 }
 
@@ -418,7 +419,18 @@ async function stopVpn() {
   send('state', { state: 'idle', message: 'Desconectado' });
 }
 
-ipcMain.handle('system-info', async () => ({ openVpn: findOpenVpn(), discord: await findDiscord(), selectedServer: selectedServer?.id || '' }));
+ipcMain.handle('system-info', async () => ({ openVpn: findOpenVpn(), discord: await findDiscord(), selectedServer: selectedServer?.id || '', version: app.getVersion() }));
+ipcMain.handle('check-update', async () => {
+  if (!app.isPackaged) return { message: 'Atualizações automáticas disponíveis apenas na versão instalada.' };
+  if (updateReady) return { message: 'Atualização pronta para instalar.', ready: true };
+  await autoUpdater.checkForUpdates();
+  return { message: 'Verificação iniciada.' };
+});
+ipcMain.handle('install-update', async () => {
+  if (!updateReady) throw new Error('Nenhuma atualização foi baixada ainda.');
+  await stopVpn();
+  autoUpdater.quitAndInstall(false, true);
+});
 ipcMain.handle('list-servers', async () => {
   const servers = await fetchCanadaServers();
   global.availableServers = new Map(servers.map(server => [server.id, server]));
@@ -475,11 +487,17 @@ ipcMain.handle('connect', async (_, options = {}) => {
 ipcMain.handle('disconnect', stopVpn);
 ipcMain.handle('open-share-page', () => shell.openExternal('https://andredllgnl5-eng.github.io/discvpn/share.html'));
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  if (app.isPackaged) setInterval(() => {
+    if (!updateReady) autoUpdater.checkForUpdates().catch(error => log(`Atualização periódica: ${error.message}`));
+  }, 60 * 60 * 1000);
+});
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
-autoUpdater.on('update-available', info => send('log', `Atualização ${info.version} encontrada; baixando…`));
-autoUpdater.on('update-downloaded', info => send('state', { state: 'connected', message: `Atualização ${info.version} pronta; será instalada ao sair` }));
-autoUpdater.on('error', error => send('log', `Atualizador: ${error.message}`));
+autoUpdater.on('update-available', info => send('update', { message: `Atualização ${info.version} encontrada; baixando…` }));
+autoUpdater.on('update-not-available', () => send('update', { message: 'Você já está na versão mais recente.' }));
+autoUpdater.on('update-downloaded', info => { updateReady = true; send('update', { message: `Versão ${info.version} pronta. Instale agora ou feche o aplicativo.`, ready: true }); });
+autoUpdater.on('error', error => { log(`Atualizador: ${error.message}`); send('update', { message: `Falha ao atualizar: ${error.message}` }); });
 app.on('before-quit', () => stopVpn());
 app.on('window-all-closed', () => app.quit());

@@ -15,7 +15,7 @@ async function loadServers(){
     }
   }catch(e){$('servers').innerHTML=`<div class="loading">Falha ao carregar: ${e.message}</div>`}
 }
-async function refresh(){const i=await window.vpn.info();$('discord').textContent=i.discord?'Encontrado':'Não encontrado';$('discord').className=i.discord?'ok':'';$('openvpn').textContent=i.openVpn?'Pronto':'Será preparado ao conectar';$('openvpn').className='ok';setState('idle','Desconectado');await loadServers()}
+async function refresh(){const i=await window.vpn.info();$('version').textContent=`v${i.version}`;$('discord').textContent=i.discord?'Encontrado':'Não encontrado';$('discord').className=i.discord?'ok':'';$('openvpn').textContent=i.openVpn?'Pronto':'Será preparado ao conectar';$('openvpn').className='ok';setState('idle','Desconectado');await loadServers()}
 $('refresh').onclick=loadServers;
 $('connect').onclick=async()=>{try{await window.vpn.connect({fullTunnel:false})}catch(e){setState('idle',e.message||'Não foi possível conectar');$('log').textContent+=`\n${e.message}`;$('log').closest('details').open=true}};
 $('disconnect').onclick=()=>window.vpn.disconnect();
@@ -23,4 +23,7 @@ window.vpn.onState(x=>setState(x.state,x.message));
 window.vpn.onLog(x=>{$('log').textContent+=`\n${x}`;$('log').scrollTop=$('log').scrollHeight});
 window.vpn.onStats(x=>$('routes').textContent=x.fullTunnel?'Todo o tráfego protegido':`${x.routes} rotas protegidas`);
 $('share-screen').onclick=async()=>{try{await window.vpn.openSharePage()}catch(error){$('share-screen').textContent=`Falha ao abrir: ${error.message}`}};
+window.vpn.onUpdate(update=>{$('update-status').textContent=update.message;$('install-update').classList.toggle('hidden',!update.ready)});
+$('check-update').onclick=async()=>{try{const update=await window.vpn.checkUpdate();$('update-status').textContent=update.message;$('install-update').classList.toggle('hidden',!update.ready)}catch(error){$('update-status').textContent=`Falha ao verificar: ${error.message}`}};
+$('install-update').onclick=async()=>{try{$('update-status').textContent='Preparando instalação…';await window.vpn.installUpdate()}catch(error){$('update-status').textContent=`Falha ao instalar: ${error.message}`}};
 refresh();
