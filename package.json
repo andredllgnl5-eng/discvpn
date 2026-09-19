@@ -1,7 +1,7 @@
 {
-  "name": "japan-discord-vpn",
-  "version": "3.0.1",
-  "description": "Japan OpenVPN launcher for Discord",
+  "name": "canada-discord-vpn",
+  "version": "4.0.0",
+  "description": "Canada OpenVPN split-tunnel launcher for Discord",
   "main": "src/main.js",
   "author": "Andre",
   "license": "MIT",
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "br.com.andre.japandiscordvpn",
-    "productName": "Japan Discord VPN",
+    "productName": "Canada Discord VPN",
     "directories": {
       "output": "dist"
     },
@@ -45,7 +45,7 @@
       "perMachine": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Japan Discord VPN",
+      "shortcutName": "Canada Discord VPN",
       "include": "build/installer.nsh"
     },
     "publish": [

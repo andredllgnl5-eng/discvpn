@@ -19,7 +19,7 @@ let discordLogPosition = 0;
 const addedRoutes = new Set();
 
 const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send(type, payload);
-const logFile = () => path.join(app.getPath('userData'), 'japan-discord-vpn.log');
+const logFile = () => path.join(app.getPath('userData'), 'canada-discord-vpn.log');
 function log(message) {
   const clean = String(message || '').trim();
   if (!clean) return;
@@ -43,7 +43,7 @@ function findOpenVpn() {
 async function ensureOpenVpn() {
   const executable = findOpenVpn();
   if (executable) return executable;
-  throw new Error('O componente OpenVPN integrado não foi encontrado. Reinstale o Japan Discord VPN para reparar os componentes de rede.');
+  throw new Error('O componente OpenVPN integrado não foi encontrado. Reinstale o Canada Discord VPN para reparar os componentes de rede.');
 }
 
 function parseCsvLine(line) {
@@ -60,24 +60,24 @@ function parseCsvLine(line) {
   return values;
 }
 
-async function fetchJapanServers() {
+async function fetchCanadaServers() {
   const response = await fetch('https://www.vpngate.net/api/iphone/', { signal: AbortSignal.timeout(25000) });
   if (!response.ok) throw new Error(`VPN Gate respondeu com HTTP ${response.status}.`);
   const lines = (await response.text()).split(/\r?\n/).filter(Boolean);
   const headerIndex = lines.findIndex(line => line.startsWith('#HostName,'));
-  if (headerIndex < 0) throw new Error('A lista de servidores japoneses recebida é inválida.');
+  if (headerIndex < 0) throw new Error('A lista de servidores canadenses recebida é inválida.');
   const headers = parseCsvLine(lines[headerIndex]).map(value => value.replace(/^#/, ''));
   const servers = lines.slice(headerIndex + 1).filter(line => !line.startsWith('*')).map(parseCsvLine)
     .map(row => Object.fromEntries(headers.map((key, index) => [key, row[index] || ''])))
-    .filter(row => row.CountryShort === 'JP' && row.OpenVPN_ConfigData_Base64)
+    .filter(row => row.CountryShort === 'CA' && row.OpenVPN_ConfigData_Base64)
     .map((row, index) => {
       const decoded = Buffer.from(row.OpenVPN_ConfigData_Base64, 'base64').toString('utf8');
       const protocol = /^proto\s+(udp|tcp)/mi.exec(decoded)?.[1]?.toLowerCase() || 'tcp';
-      return { id: `vpngate-jp-${row.IP}-${index}`, hostName: row.HostName || `Japão ${index + 1}`, ip: row.IP, protocol, provider: 'VPN Gate', ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, username: 'vpn', password: 'vpn', config: row.OpenVPN_ConfigData_Base64 };
+      return { id: `vpngate-ca-${row.IP}-${index}`, hostName: row.HostName || `Canadá ${index + 1}`, ip: row.IP, protocol, provider: 'VPN Gate', ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, username: 'vpn', password: 'vpn', config: row.OpenVPN_ConfigData_Base64 };
     })
     .sort((a, b) => a.ping - b.ping || b.speedMbps - a.speedMbps)
     .slice(0, 30);
-  if (!servers.length) throw new Error('Nenhum servidor no Japão respondeu.');
+  if (!servers.length) throw new Error('Nenhum servidor no Canadá respondeu.');
   return servers;
 }
 
@@ -85,7 +85,7 @@ function prepareServerConfig(server) {
   const dir = path.join(app.getPath('userData'), 'runtime');
   fs.mkdirSync(dir, { recursive: true });
   const authPath = path.join(dir, 'auth.txt');
-  const configPath = path.join(dir, 'selected-japan-server.ovpn');
+  const configPath = path.join(dir, 'selected-canada-server.ovpn');
   fs.writeFileSync(authPath, `${server.username || 'vpn'}\n${server.password || 'vpn'}\n`, { mode: 0o600 });
   const escapedAuthPath = authPath.replace(/\\/g, '\\\\');
   let config = Buffer.from(server.config, 'base64').toString('utf8');
@@ -135,10 +135,10 @@ function tryVpnServer(openVpn, server, routeIps, fullTunnel, attempt, total) {
         vpnGateway = ifconfig[2];
       }
       if (connected && /SIGUSR1|Restart pause|Server poll timeout|Inactivity timeout/.test(line)) {
-        send('state', { state: 'connecting', message: `Reconectando ao Japão — ${server.hostName}…` });
+        send('state', { state: 'connecting', message: `Reconectando ao Canadá — ${server.hostName}…` });
       }
       if (connected && line.includes('Initialization Sequence Completed')) {
-        send('state', { state: 'connected', message: `Discord pelo Japão — ${server.hostName}` });
+        send('state', { state: 'connected', message: `Discord pelo Canadá — ${server.hostName}` });
       }
       if (line.includes('Initialization Sequence Completed') && !settled) {
         settled = true;
@@ -399,7 +399,7 @@ async function stopVpn() {
 
 ipcMain.handle('system-info', async () => ({ openVpn: findOpenVpn(), discord: await findDiscord(), selectedServer: selectedServer?.id || '' }));
 ipcMain.handle('list-servers', async () => {
-  const servers = await fetchJapanServers();
+  const servers = await fetchCanadaServers();
   global.availableServers = new Map(servers.map(server => [server.id, server]));
   return servers.map(({ config, ...server }) => server);
 });
@@ -409,14 +409,13 @@ ipcMain.handle('select-server', (_, id) => {
   return { id: selectedServer.id, hostName: selectedServer.hostName };
 });
 ipcMain.handle('connect', async (_, options = {}) => {
-  const compatibility = options.compatibility === true;
-  const fullTunnel = compatibility;
+  const fullTunnel = false;
   const openVpn = await ensureOpenVpn();
   const discord = await findDiscord();
   if (!discord) throw new Error('Discord não encontrado. Instale a versão desktop.');
-  if (!selectedServer) throw new Error('Selecione um servidor no Japão.');
+  if (!selectedServer) throw new Error('Selecione um servidor no Canadá.');
   await stopVpn();
-  const initialRouteIps = fullTunnel ? [] : await resolveDiscordIps();
+  const initialRouteIps = await resolveCompatibilityIps();
   const available = [...(global.availableServers?.values() || [])];
   const udp = available.filter(server => server.protocol === 'udp' && server.id !== selectedServer.id);
   const tcp = available.filter(server => server.protocol !== 'udp' && server.id !== selectedServer.id);
@@ -425,9 +424,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
   for (let index = 0; index < candidates.length; index++) {
     try {
       connectedServer = await tryVpnServer(openVpn, candidates[index], initialRouteIps, fullTunnel, index + 1, candidates.length);
-      if (fullTunnel) {
-        log(`Túnel japonês conectado: ${connectedServer.hostName}`);
-      }
+      log(`Túnel canadense conectado: ${connectedServer.hostName}`);
       break;
     } catch (error) {
       log(`${candidates[index].hostName} indisponível: ${error.message}`);
@@ -435,7 +432,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
   }
   if (!connectedServer) {
     send('state', { state: 'idle', message: 'Nenhum servidor respondeu' });
-    throw new Error('Os servidores japoneses testados estão indisponíveis. Atualize a lista e tente novamente.');
+    throw new Error('Os servidores canadenses testados estão indisponíveis. Atualize a lista e tente novamente.');
   }
   selectedServer = connectedServer;
   send('stats', { routes: initialRouteIps.length, fullTunnel });
@@ -451,7 +448,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
   spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
   await monitorDiscordRoutes();
   monitorTimer = setInterval(() => monitorDiscordRoutes().catch(error => log(`Monitor do Discord: ${error.message}`)), 250);
-  send('state', { state: 'connected', message: `${compatibility ? 'Compatibilidade Japão ativa' : 'Discord pelo Japão'} — ${connectedServer.hostName}` });
+  send('state', { state: 'connected', message: `Discord pelo Canadá — ${connectedServer.hostName}` });
   return true;
 });
 ipcMain.handle('disconnect', stopVpn);
