@@ -41,7 +41,12 @@ async function capture720p60(sourceId){
   }
 }
 function tuneCall(call){
-  setTimeout(async()=>{try{const senders=call.peerConnection?.getSenders?.()||[];for(const sender of senders){if(sender.track?.kind!=='video')continue;const parameters=sender.getParameters();parameters.encodings=parameters.encodings?.length?parameters.encodings:[{}];parameters.encodings[0].maxBitrate=6000000;parameters.encodings[0].maxFramerate=60;parameters.encodings[0].scaleResolutionDownBy=1;parameters.degradationPreference='maintain-framerate';await sender.setParameters(parameters)}}catch(error){console.warn('Ajuste WebRTC',error)}},600)
+  setTimeout(async()=>{try{const senders=call.peerConnection?.getSenders?.()||[];for(const sender of senders){if(sender.track?.kind!=='video')continue;const parameters=sender.getParameters();parameters.encodings=parameters.encodings?.length?parameters.encodings:[{}];parameters.encodings[0].maxBitrate=8000000;parameters.encodings[0].minBitrate=1800000;parameters.encodings[0].maxFramerate=60;parameters.encodings[0].scaleResolutionDownBy=1;parameters.encodings[0].priority='high';parameters.encodings[0].networkPriority='high';parameters.degradationPreference='maintain-resolution';await sender.setParameters(parameters)}}catch(error){console.warn('Ajuste WebRTC',error)}},300)
+}
+function highQualitySdp(sdp){
+  const payloads=[...sdp.matchAll(/^a=rtpmap:(\d+)\s+(?:VP8|VP9|H264)\/90000.*$/gmi)].map(match=>match[1]);
+  for(const payload of payloads){const fmtp=new RegExp(`^a=fmtp:${payload} (.*)$`,'mi');if(fmtp.test(sdp))sdp=sdp.replace(fmtp,`a=fmtp:${payload} $1;x-google-start-bitrate=5000;x-google-min-bitrate=1800;x-google-max-bitrate=8000`);else{sdp=sdp.replace(new RegExp(`(^a=rtpmap:${payload} .*$)`,'mi'),`$1\r\na=fmtp:${payload} x-google-start-bitrate=5000;x-google-min-bitrate=1800;x-google-max-bitrate=8000`)}}
+  return sdp;
 }
 function stopShare(){
   shareStream?.getTracks().forEach(track=>track.stop());shareStream=null;sharePeer?.destroy();sharePeer=null;$('share-live').classList.add('hidden');$('share-screen').disabled=false;$('share-state').textContent='Transmissão encerrada';
@@ -51,7 +56,8 @@ async function startShare(sourceId){
   try{
     shareStream=await capture720p60(sourceId);const track=shareStream.getVideoTracks()[0];if(track){track.contentHint='motion';track.addEventListener('ended',stopShare,{once:true})}
     const id=`shivi-${crypto.randomUUID()}`;sharePeer=new Peer(id,{secure:true});
-    sharePeer.on('open',peerId=>{const link=`${viewerBase}?watch=${encodeURIComponent(peerId)}`;$('share-link').value=link;$('share-state').textContent='Ao vivo — 1280×720 • 60 FPS • até 6 Mbps'});
+    sharePeer.on('open',peerId=>{const link=`${viewerBase}?watch=${encodeURIComponent(peerId)}`;$('share-link').value=link;$('share-state').textContent='Ao vivo — 1280×720 • 60 FPS • até 8 Mbps'});
+    sharePeer.on('connection',connection=>connection.on('open',()=>{const call=sharePeer.call(connection.peer,shareStream,{sdpTransform:highQualitySdp});tuneCall(call)}));
     sharePeer.on('call',call=>{call.answer(shareStream);tuneCall(call)});sharePeer.on('error',error=>$('share-state').textContent=`Erro de transmissão: ${error.message}`);
   }catch(error){stopShare();$('share-live').classList.remove('hidden');$('share-state').textContent=`Falha ao capturar: ${error.message}`;alert(`Não foi possível iniciar a captura: ${error.message}`)}
 }
