@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, clipboard, session } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,7 +16,6 @@ let vpnClientIp = '';
 let connectionTimer = null;
 let monitorBusy = false;
 let discordLogPosition = 0;
-let captureSourceId = '';
 const addedRoutes = new Set();
 
 const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send(type, payload);
@@ -474,35 +473,9 @@ ipcMain.handle('connect', async (_, options = {}) => {
   return true;
 });
 ipcMain.handle('disconnect', stopVpn);
-ipcMain.handle('capture-sources', async () => {
-  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: true });
-  return sources
-    .filter(source => !/Canada Discord VPN/i.test(source.name))
-    .map(source => ({ id: source.id, name: source.name, kind: source.id.startsWith('screen:') ? 'screen' : 'window', thumbnail: source.thumbnail.toDataURL(), icon: source.appIcon?.toDataURL() || '' }));
-});
-ipcMain.handle('select-capture-source', async (_, id) => {
-  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
-  const source = sources.find(item => item.id === id);
-  if (!source) throw new Error('A janela/tela escolhida não está mais disponível. Selecione novamente.');
-  captureSourceId = source.id;
-  return { kind: source.id.startsWith('screen:') ? 'screen' : 'window', name: source.name };
-});
-ipcMain.handle('copy-text', (_, value) => clipboard.writeText(String(value || '')));
+ipcMain.handle('open-share-page', () => shell.openExternal('https://andredllgnl5-eng.github.io/discvpn/share.html'));
 
-app.whenReady().then(() => {
-  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
-    try {
-      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
-      const source = sources.find(item => item.id === captureSourceId);
-      if (!source) return callback({});
-      callback({ video: source, audio: source.id.startsWith('screen:') ? 'loopback' : undefined });
-    } catch (error) {
-      log(`Captura de tela: ${error.message}`);
-      callback({});
-    }
-  });
-  createWindow();
-});
+app.whenReady().then(createWindow);
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 autoUpdater.on('update-available', info => send('log', `Atualização ${info.version} encontrada; baixando…`));

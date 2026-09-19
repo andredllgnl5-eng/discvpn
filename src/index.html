@@ -11,12 +11,10 @@
   <div class="mode"><span><strong>Somente Discord</strong><small>Jogos, navegador e os outros aplicativos continuam usando sua conexão normal no Brasil.</small></span></div>
   <button class="primary" id="connect" disabled>Conectar e abrir Discord</button><button class="secondary" id="disconnect" disabled>Desconectar</button>
   <section class="share-card">
-    <div><strong>Compartilhar tela por link</strong><small>Escolha uma tela ou jogo e transmita em 720p a 60 FPS.</small></div>
-    <button id="share-screen">Escolher tela</button>
-    <div id="share-live" class="share-live hidden"><span id="share-state">Preparando transmissão…</span><div class="link-row"><input id="share-link" readonly><button id="copy-link">Copiar link</button></div><button id="stop-share" class="danger">Encerrar transmissão</button></div>
+    <div><strong>Compartilhar tela por link</strong><small>Abre o seletor de tela/janela do navegador normal, fora do processo elevado da VPN. 720p a 60 FPS quando a conexão permitir.</small></div>
+    <button id="share-screen">Abrir compartilhamento</button>
   </section>
-  <div id="source-modal" class="modal hidden"><div class="modal-panel"><div class="modal-head"><div><strong>Escolha o que transmitir</strong><small>Qualquer pessoa com o link poderá assistir.</small></div><button id="close-sources">Fechar</button></div><div id="source-grid" class="source-grid"></div></div></div>
   <details><summary>Diagnóstico</summary><pre id="log">Pronto.</pre></details>
   <p class="note">O aplicativo cria rotas específicas para serviços e mídia do Discord. A rota padrão do Windows não é alterada.</p>
   <footer>Feito por: <strong>Shivi Star</strong></footer>
-</main><script src="../node_modules/peerjs/dist/peerjs.min.js"></script><script src="renderer.js"></script></body></html>
+</main><script src="renderer.js"></script></body></html>
