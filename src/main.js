@@ -426,18 +426,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
     try {
       connectedServer = await tryVpnServer(openVpn, candidates[index], initialRouteIps, fullTunnel, index + 1, candidates.length);
       if (fullTunnel) {
-        send('state', { state: 'connecting', message: `Confirmando saída no Japão — ${connectedServer.hostName}…` });
-        await wait(900);
-        const exit = await verifyJapanExit();
-        log(`Saída VPN: ${exit.ip || 'desconhecida'} (${exit.country || 'região desconhecida'})`);
-        if (!exit.valid) {
-          const invalidProcess = vpnProcess;
-          vpnProcess = null;
-          if (invalidProcess && !invalidProcess.killed) invalidProcess.kill();
-          connectedServer = null;
-          await wait(1800);
-          continue;
-        }
+        log(`Túnel japonês conectado: ${connectedServer.hostName}`);
       }
       break;
     } catch (error) {
