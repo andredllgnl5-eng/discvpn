@@ -33,8 +33,12 @@ async function showSources(){
   }catch(error){$('source-grid').innerHTML=`<div class="loading">Falha ao listar telas: ${error.message}</div>`}
 }
 async function capture720p60(sourceId){
-  const video={mandatory:{chromeMediaSource:'desktop',chromeMediaSourceId:sourceId,minWidth:1280,maxWidth:1280,minHeight:720,maxHeight:720,minFrameRate:60,maxFrameRate:60}};
-  try{return await navigator.mediaDevices.getUserMedia({audio:{mandatory:{chromeMediaSource:'desktop',chromeMediaSourceId:sourceId}},video})}catch{return navigator.mediaDevices.getUserMedia({audio:false,video})}
+  await window.vpn.selectCaptureSource(sourceId);
+  const video={width:{ideal:1280},height:{ideal:720},frameRate:{ideal:60,max:60}};
+  try{return await navigator.mediaDevices.getDisplayMedia({audio:true,video})}catch(error){
+    if(error.name==='NotAllowedError')throw error;
+    return navigator.mediaDevices.getDisplayMedia({audio:false,video});
+  }
 }
 function tuneCall(call){
   setTimeout(async()=>{try{const senders=call.peerConnection?.getSenders?.()||[];for(const sender of senders){if(sender.track?.kind!=='video')continue;const parameters=sender.getParameters();parameters.encodings=parameters.encodings?.length?parameters.encodings:[{}];parameters.encodings[0].maxBitrate=6000000;parameters.encodings[0].maxFramerate=60;parameters.encodings[0].scaleResolutionDownBy=1;parameters.degradationPreference='maintain-framerate';await sender.setParameters(parameters)}}catch(error){console.warn('Ajuste WebRTC',error)}},600)
@@ -49,7 +53,7 @@ async function startShare(sourceId){
     const id=`shivi-${crypto.randomUUID()}`;sharePeer=new Peer(id,{secure:true});
     sharePeer.on('open',peerId=>{const link=`${viewerBase}?watch=${encodeURIComponent(peerId)}`;$('share-link').value=link;$('share-state').textContent='Ao vivo — 1280×720 • 60 FPS • até 6 Mbps'});
     sharePeer.on('call',call=>{call.answer(shareStream);tuneCall(call)});sharePeer.on('error',error=>$('share-state').textContent=`Erro de transmissão: ${error.message}`);
-  }catch(error){stopShare();alert(`Não foi possível iniciar a captura: ${error.message}`)}
+  }catch(error){stopShare();$('share-live').classList.remove('hidden');$('share-state').textContent=`Falha ao capturar: ${error.message}`;alert(`Não foi possível iniciar a captura: ${error.message}`)}
 }
 $('share-screen').onclick=showSources;$('close-sources').onclick=()=>$('source-modal').classList.add('hidden');$('stop-share').onclick=stopShare;
 $('copy-link').onclick=async()=>{await window.vpn.copyText($('share-link').value);$('copy-link').textContent='Copiado!';setTimeout(()=>$('copy-link').textContent='Copiar link',1500)};

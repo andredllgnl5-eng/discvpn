@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('vpn', {
   connect: options => ipcRenderer.invoke('connect', options),
   disconnect: () => ipcRenderer.invoke('disconnect'),
   captureSources: () => ipcRenderer.invoke('capture-sources'),
+  selectCaptureSource: id => ipcRenderer.invoke('select-capture-source', id),
   copyText: value => ipcRenderer.invoke('copy-text', value),
   onState: cb => ipcRenderer.on('state', (_, value) => cb(value)),
   onLog: cb => ipcRenderer.on('log', (_, value) => cb(value)),

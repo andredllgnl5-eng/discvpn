@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, clipboard, session } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,6 +16,7 @@ let vpnClientIp = '';
 let connectionTimer = null;
 let monitorBusy = false;
 let discordLogPosition = 0;
+let captureSourceId = '';
 const addedRoutes = new Set();
 
 const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send(type, payload);
@@ -61,24 +62,45 @@ function parseCsvLine(line) {
 }
 
 async function fetchCanadaServers() {
-  const response = await fetch('https://www.vpngate.net/api/iphone/', { signal: AbortSignal.timeout(25000) });
-  if (!response.ok) throw new Error(`VPN Gate respondeu com HTTP ${response.status}.`);
-  const lines = (await response.text()).split(/\r?\n/).filter(Boolean);
-  const headerIndex = lines.findIndex(line => line.startsWith('#HostName,'));
-  if (headerIndex < 0) throw new Error('A lista de servidores canadenses recebida é inválida.');
-  const headers = parseCsvLine(lines[headerIndex]).map(value => value.replace(/^#/, ''));
-  const servers = lines.slice(headerIndex + 1).filter(line => !line.startsWith('*')).map(parseCsvLine)
-    .map(row => Object.fromEntries(headers.map((key, index) => [key, row[index] || ''])))
-    .filter(row => row.CountryShort === 'CA' && row.OpenVPN_ConfigData_Base64)
-    .map((row, index) => {
-      const decoded = Buffer.from(row.OpenVPN_ConfigData_Base64, 'base64').toString('utf8');
-      const protocol = /^proto\s+(udp|tcp)/mi.exec(decoded)?.[1]?.toLowerCase() || 'tcp';
-      return { id: `vpngate-ca-${row.IP}-${index}`, hostName: row.HostName || `Canadá ${index + 1}`, ip: row.IP, protocol, provider: 'VPN Gate', ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, username: 'vpn', password: 'vpn', config: row.OpenVPN_ConfigData_Base64 };
-    })
-    .sort((a, b) => a.ping - b.ping || b.speedMbps - a.speedMbps)
-    .slice(0, 30);
+  const servers = [];
+  try {
+    const pageResponse = await fetch('https://www.vpnbook.com/freevpn/openvpn', { signal: AbortSignal.timeout(20000) });
+    const page = pageResponse.ok ? await pageResponse.text() : '';
+    const password = /Password<\/label>[\s\S]{0,600}?<code[^>]*>([^<]+)<\/code>/i.exec(page)?.[1]?.trim();
+    if (password) {
+      const hosts = [
+        { id: 'ca149', name: 'Canadá 1', host: 'ca149.vpnbook.com', ip: '144.217.253.149' },
+        { id: 'ca196', name: 'Canadá 2', host: 'ca196.vpnbook.com', ip: '142.4.216.196' }
+      ];
+      const profiles = [{ id: 'udp25000', label: 'UDP rápido', protocol: 'udp' }, { id: 'udp53', label: 'UDP alternativo', protocol: 'udp' }, { id: 'tcp443', label: 'TCP compatível', protocol: 'tcp' }];
+      const book = await Promise.all(hosts.flatMap(host => profiles.map(async profile => {
+        try {
+          const response = await fetch(`https://www.vpnbook.com/api/openvpn?hostname=${host.host}&protocol=${profile.id}&ip=${host.ip}`, { signal: AbortSignal.timeout(15000) });
+          if (!response.ok) return null;
+          return { id: `${host.id}-${profile.id}`, hostName: `${host.name} · ${profile.label}`, ip: host.ip, protocol: profile.protocol, provider: 'VPNBook', ping: 0, speedMbps: 0, sessions: 0, score: 0, username: 'vpnbook', password, config: Buffer.from(await response.arrayBuffer()).toString('base64') };
+        } catch { return null; }
+      })));
+      servers.push(...book.filter(Boolean));
+    }
+  } catch (error) { log(`VPNBook: ${error.message}`); }
+  try {
+    const response = await fetch('https://www.vpngate.net/api/iphone/', { signal: AbortSignal.timeout(25000) });
+    if (response.ok) {
+      const lines = (await response.text()).split(/\r?\n/).filter(Boolean);
+      const headerIndex = lines.findIndex(line => line.startsWith('#HostName,'));
+      if (headerIndex >= 0) {
+        const headers = parseCsvLine(lines[headerIndex]).map(value => value.replace(/^#/, ''));
+        const gate = lines.slice(headerIndex + 1).filter(line => !line.startsWith('*')).map(parseCsvLine)
+          .map(row => Object.fromEntries(headers.map((key, index) => [key, row[index] || ''])))
+          .filter(row => row.CountryShort === 'CA' && row.OpenVPN_ConfigData_Base64)
+          .map((row, index) => { const decoded = Buffer.from(row.OpenVPN_ConfigData_Base64, 'base64').toString('utf8'); const protocol = /^proto\s+(udp|tcp)/mi.exec(decoded)?.[1]?.toLowerCase() || 'tcp'; return { id: `vpngate-ca-${row.IP}-${index}`, hostName: row.HostName || `Canadá ${index + 1}`, ip: row.IP, protocol, provider: 'VPN Gate', ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, username: 'vpn', password: 'vpn', config: row.OpenVPN_ConfigData_Base64 }; });
+        servers.unshift(...gate);
+      }
+    }
+  } catch (error) { log(`VPN Gate: ${error.message}`); }
+  servers.sort((a, b) => (a.protocol === 'udp' ? 0 : 1) - (b.protocol === 'udp' ? 0 : 1) || a.ping - b.ping || b.speedMbps - a.speedMbps);
   if (!servers.length) throw new Error('Nenhum servidor no Canadá respondeu.');
-  return servers;
+  return servers.slice(0, 30);
 }
 
 function prepareServerConfig(server) {
@@ -458,9 +480,23 @@ ipcMain.handle('capture-sources', async () => {
     .filter(source => !/Canada Discord VPN/i.test(source.name))
     .map(source => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), icon: source.appIcon?.toDataURL() || '' }));
 });
+ipcMain.handle('select-capture-source', (_, id) => { captureSourceId = String(id || ''); return true; });
 ipcMain.handle('copy-text', (_, value) => clipboard.writeText(String(value || '')));
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
+      const source = sources.find(item => item.id === captureSourceId);
+      if (!source) return callback({});
+      callback({ video: source, audio: 'loopback' });
+    } catch (error) {
+      log(`Captura de tela: ${error.message}`);
+      callback({});
+    }
+  });
+  createWindow();
+});
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 autoUpdater.on('update-available', info => send('log', `Atualização ${info.version} encontrada; baixando…`));
