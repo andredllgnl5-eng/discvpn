@@ -25,7 +25,7 @@ const { pathToFileURL } = require('node:url');
   let viewer = {};
   if (result.link) {
     const peerId = new URL(result.link).searchParams.get('watch');
-    const viewerUrl = `${pathToFileURL(path.resolve(__dirname, '..', 'docs', 'index.html')).href}?watch=${encodeURIComponent(peerId)}`;
+    const viewerUrl = process.env.STREAM_VIEWER_PUBLIC === '1' ? result.link : `${pathToFileURL(path.resolve(__dirname, '..', 'docs', 'index.html')).href}?watch=${encodeURIComponent(peerId)}`;
     const viewerPromise = app.waitForEvent('window');
     await app.evaluate(async ({ BrowserWindow }, url) => {
       const window = new BrowserWindow({ width: 1280, height: 800, show: true });
