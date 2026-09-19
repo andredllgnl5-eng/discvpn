@@ -453,7 +453,15 @@ ipcMain.handle('connect', async (_, options = {}) => {
   const available = [...(global.availableServers?.values() || [])];
   const udp = available.filter(server => server.protocol === 'udp' && server.id !== selectedServer.id);
   const tcp = available.filter(server => server.protocol !== 'udp' && server.id !== selectedServer.id);
-  const candidates = [selectedServer, ...udp, ...tcp].slice(0, 5);
+  const compatibleTcp = [
+    ...(selectedServer.protocol !== 'udp' ? [selectedServer] : []),
+    ...tcp.sort((a, b) => (a.provider === 'VPNBook' ? 0 : 1) - (b.provider === 'VPNBook' ? 0 : 1) || a.ping - b.ping)
+  ].filter((server, index, list) => index === list.findIndex(item => item.id === server.id));
+  // Discord video is high-bandwidth UDP. Encapsulating it in another UDP
+  // tunnel caused persistent packet loss/black frames on the free exits. In
+  // compatibility mode use TCP OpenVPN only; it is slower but reliable.
+  const candidates = (compatibility ? compatibleTcp : [selectedServer, ...udp, ...tcp]).slice(0, 5);
+  if (!candidates.length) throw new Error('Nenhum servidor TCP compatível com transmissão está disponível agora.');
   let connectedServer = null;
   for (let index = 0; index < candidates.length; index++) {
     try {
