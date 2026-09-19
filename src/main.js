@@ -478,9 +478,15 @@ ipcMain.handle('capture-sources', async () => {
   const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: true });
   return sources
     .filter(source => !/Canada Discord VPN/i.test(source.name))
-    .map(source => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), icon: source.appIcon?.toDataURL() || '' }));
+    .map(source => ({ id: source.id, name: source.name, kind: source.id.startsWith('screen:') ? 'screen' : 'window', thumbnail: source.thumbnail.toDataURL(), icon: source.appIcon?.toDataURL() || '' }));
 });
-ipcMain.handle('select-capture-source', (_, id) => { captureSourceId = String(id || ''); return true; });
+ipcMain.handle('select-capture-source', async (_, id) => {
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
+  const source = sources.find(item => item.id === id);
+  if (!source) throw new Error('A janela/tela escolhida não está mais disponível. Selecione novamente.');
+  captureSourceId = source.id;
+  return { kind: source.id.startsWith('screen:') ? 'screen' : 'window', name: source.name };
+});
 ipcMain.handle('copy-text', (_, value) => clipboard.writeText(String(value || '')));
 
 app.whenReady().then(() => {
@@ -489,7 +495,7 @@ app.whenReady().then(() => {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
       const source = sources.find(item => item.id === captureSourceId);
       if (!source) return callback({});
-      callback({ video: source, audio: 'loopback' });
+      callback({ video: source, audio: source.id.startsWith('screen:') ? 'loopback' : undefined });
     } catch (error) {
       log(`Captura de tela: ${error.message}`);
       callback({});

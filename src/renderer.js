@@ -33,12 +33,20 @@ async function showSources(){
   }catch(error){$('source-grid').innerHTML=`<div class="loading">Falha ao listar telas: ${error.message}</div>`}
 }
 async function capture720p60(sourceId){
-  await window.vpn.selectCaptureSource(sourceId);
-  const video={width:{ideal:1280},height:{ideal:720},frameRate:{ideal:60,max:60}};
-  try{return await navigator.mediaDevices.getDisplayMedia({audio:true,video})}catch(error){
-    if(error.name==='NotAllowedError')throw error;
-    return navigator.mediaDevices.getDisplayMedia({audio:false,video});
+  const source=await window.vpn.selectCaptureSource(sourceId);
+  const quality={width:{ideal:1280},height:{ideal:720},frameRate:{ideal:60,max:60}};
+  const attempts=source.kind==='screen'?[{audio:true,video:quality},{audio:false,video:quality},{audio:false,video:true}]:[{audio:false,video:quality},{audio:false,video:true}];
+  let lastError;
+  for(const options of attempts){
+    try{
+      const stream=await navigator.mediaDevices.getDisplayMedia(options);
+      const track=stream.getVideoTracks()[0];
+      if(!track || track.readyState!=='live'){stream.getTracks().forEach(item=>item.stop());throw new Error('A fonte escolhida não iniciou o vídeo.')}
+      if(options.video===true)await track.applyConstraints(quality).catch(()=>{});
+      return stream;
+    }catch(error){lastError=error;if(error.name==='NotAllowedError')break}
   }
+  throw new Error(`Não foi possível capturar ${source.name}: ${lastError?.message||'fonte indisponível'}. Tente compartilhar a tela inteira ou deixar o jogo em modo janela sem bordas.`);
 }
 function tuneCall(call){
   setTimeout(async()=>{try{const senders=call.peerConnection?.getSenders?.()||[];for(const sender of senders){if(sender.track?.kind!=='video')continue;const parameters=sender.getParameters();parameters.encodings=parameters.encodings?.length?parameters.encodings:[{}];parameters.encodings[0].maxBitrate=8000000;parameters.encodings[0].minBitrate=1800000;parameters.encodings[0].maxFramerate=60;parameters.encodings[0].scaleResolutionDownBy=1;parameters.encodings[0].priority='high';parameters.encodings[0].networkPriority='high';parameters.degradationPreference='maintain-resolution';await sender.setParameters(parameters)}}catch(error){console.warn('Ajuste WebRTC',error)}},300)
@@ -59,8 +67,8 @@ async function startShare(sourceId){
     sharePeer.on('open',peerId=>{const link=`${viewerBase}?watch=${encodeURIComponent(peerId)}`;$('share-link').value=link;$('share-state').textContent='Ao vivo — 1280×720 • 60 FPS • até 8 Mbps'});
     sharePeer.on('connection',connection=>connection.on('open',()=>{const call=sharePeer.call(connection.peer,shareStream,{sdpTransform:highQualitySdp});tuneCall(call)}));
     sharePeer.on('call',call=>{call.answer(shareStream);tuneCall(call)});sharePeer.on('error',error=>$('share-state').textContent=`Erro de transmissão: ${error.message}`);
-  }catch(error){stopShare();$('share-live').classList.remove('hidden');$('share-state').textContent=`Falha ao capturar: ${error.message}`;alert(`Não foi possível iniciar a captura: ${error.message}`)}
+  }catch(error){stopShare();$('share-live').classList.remove('hidden');$('share-state').textContent=`Falha ao capturar: ${error.message}`;$('share-link').value='';$('copy-link').disabled=true}
 }
-$('share-screen').onclick=showSources;$('close-sources').onclick=()=>$('source-modal').classList.add('hidden');$('stop-share').onclick=stopShare;
+$('share-screen').onclick=()=>{ $('copy-link').disabled=false;showSources() };$('close-sources').onclick=()=>$('source-modal').classList.add('hidden');$('stop-share').onclick=stopShare;
 $('copy-link').onclick=async()=>{await window.vpn.copyText($('share-link').value);$('copy-link').textContent='Copiado!';setTimeout(()=>$('copy-link').textContent='Copiar link',1500)};
 refresh();
