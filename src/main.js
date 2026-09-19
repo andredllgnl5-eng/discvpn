@@ -61,54 +61,23 @@ function parseCsvLine(line) {
 }
 
 async function fetchJapanServers() {
-  const pageResponse = await fetch('https://www.vpnbook.com/freevpn/openvpn', { signal: AbortSignal.timeout(20000) });
-  if (!pageResponse.ok) throw new Error(`VPNBook respondeu com HTTP ${pageResponse.status}.`);
-  const page = await pageResponse.text();
-  const password = /Password<\/label>[\s\S]{0,600}?<code[^>]*>([^<]+)<\/code>/i.exec(page)?.[1]?.trim();
-  if (!password) throw new Error('Não foi possível obter a credencial atual do VPNBook.');
-  const hosts = [
-    { id: 'us16', name: 'Estados Unidos 1', host: 'us16.vpnbook.com', ip: '147.135.15.16', country: 'US' },
-    { id: 'us178', name: 'Estados Unidos 2', host: 'us178.vpnbook.com', ip: '147.135.37.178', country: 'US' },
-    { id: 'ca149', name: 'Canadá 1', host: 'ca149.vpnbook.com', ip: '144.217.253.149', country: 'CA' },
-    { id: 'ca196', name: 'Canadá 2', host: 'ca196.vpnbook.com', ip: '142.4.216.196', country: 'CA' }
-  ];
-  const protocols = [
-    { id: 'udp25000', label: 'UDP rápido', protocol: 'udp' },
-    { id: 'udp53', label: 'UDP alternativo', protocol: 'udp' },
-    { id: 'tcp443', label: 'TCP compatível', protocol: 'tcp' }
-  ];
-  const servers = (await Promise.all(hosts.flatMap(host => protocols.map(async profile => {
-    try {
-      const url = `https://www.vpnbook.com/api/openvpn?hostname=${host.host}&protocol=${profile.id}&ip=${host.ip}`;
-      const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      if (!response.ok) return null;
-      const config = Buffer.from(await response.arrayBuffer()).toString('base64');
-      return { id: `${host.id}-${profile.id}`, hostName: `${host.name} · ${profile.label}`, ip: host.ip, protocol: profile.protocol, provider: 'VPNBook', ping: 0, speedMbps: 0, sessions: 0, score: 0, username: 'vpnbook', password, config };
-    } catch { return null; }
-  })))).filter(Boolean);
-  try {
-    const gateResponse = await fetch('https://www.vpngate.net/api/iphone/', { signal: AbortSignal.timeout(25000) });
-    if (gateResponse.ok) {
-      const lines = (await gateResponse.text()).split(/\r?\n/).filter(Boolean);
-      const headerIndex = lines.findIndex(line => line.startsWith('#HostName,'));
-      if (headerIndex >= 0) {
-        const headers = parseCsvLine(lines[headerIndex]).map(value => value.replace(/^#/, ''));
-        const gateServers = lines.slice(headerIndex + 1).filter(line => !line.startsWith('*')).map(parseCsvLine)
-          .map(row => Object.fromEntries(headers.map((key, index) => [key, row[index] || ''])))
-          .filter(row => ['US', 'CA'].includes(row.CountryShort) && row.OpenVPN_ConfigData_Base64)
-          .map((row, index) => {
-            const decoded = Buffer.from(row.OpenVPN_ConfigData_Base64, 'base64').toString('utf8');
-            const protocol = /^proto\s+(udp|tcp)/mi.exec(decoded)?.[1]?.toLowerCase() || 'tcp';
-            const country = row.CountryShort === 'CA' ? 'Canadá' : 'Estados Unidos';
-            return { id: `vpngate-${row.IP}-${index}`, hostName: `${country} · VPN Gate ${protocol.toUpperCase()}`, ip: row.IP, protocol, provider: 'VPN Gate', ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, username: 'vpn', password: 'vpn', config: row.OpenVPN_ConfigData_Base64 };
-          })
-          .sort((a, b) => (a.protocol === 'udp' ? 0 : 1) - (b.protocol === 'udp' ? 0 : 1) || a.ping - b.ping)
-          .slice(0, 12);
-        servers.unshift(...gateServers);
-      }
-    }
-  } catch (error) { log(`VPN Gate: ${error.message}`); }
-  if (!servers.length) throw new Error('Nenhum servidor da América do Norte respondeu.');
+  const response = await fetch('https://www.vpngate.net/api/iphone/', { signal: AbortSignal.timeout(25000) });
+  if (!response.ok) throw new Error(`VPN Gate respondeu com HTTP ${response.status}.`);
+  const lines = (await response.text()).split(/\r?\n/).filter(Boolean);
+  const headerIndex = lines.findIndex(line => line.startsWith('#HostName,'));
+  if (headerIndex < 0) throw new Error('A lista de servidores japoneses recebida é inválida.');
+  const headers = parseCsvLine(lines[headerIndex]).map(value => value.replace(/^#/, ''));
+  const servers = lines.slice(headerIndex + 1).filter(line => !line.startsWith('*')).map(parseCsvLine)
+    .map(row => Object.fromEntries(headers.map((key, index) => [key, row[index] || ''])))
+    .filter(row => row.CountryShort === 'JP' && row.OpenVPN_ConfigData_Base64)
+    .map((row, index) => {
+      const decoded = Buffer.from(row.OpenVPN_ConfigData_Base64, 'base64').toString('utf8');
+      const protocol = /^proto\s+(udp|tcp)/mi.exec(decoded)?.[1]?.toLowerCase() || 'tcp';
+      return { id: `vpngate-jp-${row.IP}-${index}`, hostName: row.HostName || `Japão ${index + 1}`, ip: row.IP, protocol, provider: 'VPN Gate', ping: Number(row.Ping) || 9999, speedMbps: Math.round((Number(row.Speed) || 0) / 100000) / 10, sessions: Number(row.NumVpnSessions) || 0, score: Number(row.Score) || 0, username: 'vpn', password: 'vpn', config: row.OpenVPN_ConfigData_Base64 };
+    })
+    .sort((a, b) => a.ping - b.ping || b.speedMbps - a.speedMbps)
+    .slice(0, 30);
+  if (!servers.length) throw new Error('Nenhum servidor no Japão respondeu.');
   return servers;
 }
 
@@ -166,10 +135,10 @@ function tryVpnServer(openVpn, server, routeIps, fullTunnel, attempt, total) {
         vpnGateway = ifconfig[2];
       }
       if (connected && /SIGUSR1|Restart pause|Server poll timeout|Inactivity timeout/.test(line)) {
-        send('state', { state: 'connecting', message: `Reconectando à América do Norte — ${server.hostName}…` });
+        send('state', { state: 'connecting', message: `Reconectando ao Japão — ${server.hostName}…` });
       }
       if (connected && line.includes('Initialization Sequence Completed')) {
-        send('state', { state: 'connected', message: `Discord pela América do Norte — ${server.hostName}` });
+        send('state', { state: 'connected', message: `Discord pelo Japão — ${server.hostName}` });
       }
       if (line.includes('Initialization Sequence Completed') && !settled) {
         settled = true;
@@ -222,9 +191,8 @@ async function resolveCompatibilityIps() {
     const rtcRaw = await ps("[System.Net.Dns]::GetHostAddresses('latency.discord.media') | Where-Object {$_.AddressFamily -eq 'InterNetwork'} | ForEach-Object {$_.IPAddressToString}");
     rtcRaw.split(/\r?\n/).map(x => x.trim()).filter(Boolean).forEach(ip => rtcControl.add(ip));
   } catch (error) { log(`DNS de compatibilidade: ${error.message}`); }
-  // RTC WebSockets must stay direct because free VPN exits block Discord's
-  // alternate TLS ports. The main gateway still uses the NA tunnel and picks
-  // an NA voice region; concrete UDP media IPs are tunneled separately.
+  // Used only when compatibility is disabled. Compatibility restores the
+  // proven full-tunnel Japan behavior from v1.7.0.
   return [...found].filter(ip => !rtcControl.has(ip));
 }
 
@@ -239,7 +207,7 @@ function testTunnelQuality() {
   });
 }
 
-async function verifyNorthAmericaExit() {
+async function verifyJapanExit() {
   const services = [
     ['https://ipapi.co/json/', data => data.country_code],
     ['https://ipwho.is/', data => data.country_code]
@@ -249,7 +217,7 @@ async function verifyNorthAmericaExit() {
       const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
       const data = await response.json();
       const country = String(getCountry(data) || '').toUpperCase();
-      if (country) return { valid: ['US', 'CA'].includes(country), country, ip: data.ip || '' };
+      if (country) return { valid: country === 'JP', country, ip: data.ip || '' };
     } catch (error) { log(`Verificação de região: ${error.message}`); }
   }
   return { valid: false, country: '', ip: '' };
@@ -441,61 +409,31 @@ ipcMain.handle('select-server', (_, id) => {
   return { id: selectedServer.id, hostName: selectedServer.hostName };
 });
 ipcMain.handle('connect', async (_, options = {}) => {
-  const fullTunnel = false;
   const compatibility = options.compatibility === true;
+  const fullTunnel = compatibility;
   const openVpn = await ensureOpenVpn();
   const discord = await findDiscord();
   if (!discord) throw new Error('Discord não encontrado. Instale a versão desktop.');
-  if (!selectedServer) throw new Error('Selecione um servidor dos Estados Unidos ou Canadá.');
+  if (!selectedServer) throw new Error('Selecione um servidor no Japão.');
   await stopVpn();
-  const initialRouteIps = compatibility ? await resolveCompatibilityIps() : await resolveDiscordIps();
-  if (compatibility && !initialRouteIps.length) throw new Error('Não foi possível preparar o modo de compatibilidade. Verifique o DNS.');
+  const initialRouteIps = fullTunnel ? [] : await resolveDiscordIps();
   const available = [...(global.availableServers?.values() || [])];
   const udp = available.filter(server => server.protocol === 'udp' && server.id !== selectedServer.id);
   const tcp = available.filter(server => server.protocol !== 'udp' && server.id !== selectedServer.id);
-  const compatibleTcp = [
-    ...(selectedServer.protocol !== 'udp' ? [selectedServer] : []),
-    ...tcp.sort((a, b) => (a.provider === 'VPNBook' ? 0 : 1) - (b.provider === 'VPNBook' ? 0 : 1) || a.ping - b.ping)
-  ].filter((server, index, list) => index === list.findIndex(item => item.id === server.id));
-  // Discord video is high-bandwidth UDP. Encapsulating it in another UDP
-  // tunnel caused persistent packet loss/black frames on the free exits. In
-  // compatibility mode use TCP OpenVPN only; it is slower but reliable.
-  const candidates = (compatibility ? compatibleTcp : [selectedServer, ...udp, ...tcp]).slice(0, 5);
-  if (!candidates.length) throw new Error('Nenhum servidor TCP compatível com transmissão está disponível agora.');
+  const candidates = [selectedServer, ...udp, ...tcp].filter((server, index, list) => index === list.findIndex(item => item.id === server.id)).slice(0, 5);
   let connectedServer = null;
   for (let index = 0; index < candidates.length; index++) {
     try {
       connectedServer = await tryVpnServer(openVpn, candidates[index], initialRouteIps, fullTunnel, index + 1, candidates.length);
       if (fullTunnel) {
-        send('state', { state: 'connecting', message: `Testando estabilidade — ${connectedServer.hostName}…` });
-        await wait(1200);
-        const quality = await testTunnelQuality();
-        log(`Qualidade ${connectedServer.hostName}: ${quality.latency} ms, ${quality.loss}% de perda (${quality.replies}/${quality.sent})`);
-        if (!quality.healthy) {
-          const unstableProcess = vpnProcess;
-          vpnProcess = null;
-          if (unstableProcess && !unstableProcess.killed) unstableProcess.kill();
-          connectedServer = null;
-          await wait(1800);
-          continue;
-        }
-        const exit = await verifyNorthAmericaExit();
+        send('state', { state: 'connecting', message: `Confirmando saída no Japão — ${connectedServer.hostName}…` });
+        await wait(900);
+        const exit = await verifyJapanExit();
         log(`Saída VPN: ${exit.ip || 'desconhecida'} (${exit.country || 'região desconhecida'})`);
         if (!exit.valid) {
           const invalidProcess = vpnProcess;
           vpnProcess = null;
           if (invalidProcess && !invalidProcess.killed) invalidProcess.kill();
-          connectedServer = null;
-          await wait(1800);
-          continue;
-        }
-        send('state', { state: 'connecting', message: `Testando voz e transmissão — ${connectedServer.hostName}…` });
-        const rtc = await verifyDiscordRtc();
-        log(`Teste RTC ${connectedServer.hostName}: ${rtc.valid ? 'OK' : 'BLOQUEADO'} (${rtc.target})`);
-        if (!rtc.valid) {
-          const blockedProcess = vpnProcess;
-          vpnProcess = null;
-          if (blockedProcess && !blockedProcess.killed) blockedProcess.kill();
           connectedServer = null;
           await wait(1800);
           continue;
@@ -508,7 +446,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
   }
   if (!connectedServer) {
     send('state', { state: 'idle', message: 'Nenhum servidor respondeu' });
-    throw new Error('Os servidores norte-americanos testados estão indisponíveis. Atualize a lista e tente novamente.');
+    throw new Error('Os servidores japoneses testados estão indisponíveis. Atualize a lista e tente novamente.');
   }
   selectedServer = connectedServer;
   send('stats', { routes: initialRouteIps.length, fullTunnel });
@@ -524,7 +462,7 @@ ipcMain.handle('connect', async (_, options = {}) => {
   spawn(discord, [], { detached: true, stdio: 'ignore' }).unref();
   await monitorDiscordRoutes();
   monitorTimer = setInterval(() => monitorDiscordRoutes().catch(error => log(`Monitor do Discord: ${error.message}`)), 250);
-  send('state', { state: 'connected', message: `${compatibility ? 'Compatibilidade ativa' : 'Discord pela América do Norte'} — ${connectedServer.hostName}` });
+  send('state', { state: 'connected', message: `${compatibility ? 'Compatibilidade Japão ativa' : 'Discord pelo Japão'} — ${connectedServer.hostName}` });
   return true;
 });
 ipcMain.handle('disconnect', stopVpn);
