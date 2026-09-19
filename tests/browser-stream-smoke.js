@@ -48,8 +48,14 @@ const docs = path.resolve(__dirname, '..', 'docs');
     if (await viewer.locator('#video').evaluate(video => video.muted)) throw new Error('Áudio não foi ativado.');
     await viewer.locator('#fullscreen').click();
     if (!await viewer.locator('#video').evaluate(video => document.fullscreenElement === video)) throw new Error('Tela cheia não foi ativada.');
-    const result = await viewer.evaluate(() => ({ width: document.querySelector('#video').videoWidth, height: document.querySelector('#video').videoHeight, status: document.querySelector('#status').textContent, audio: !document.querySelector('#video').muted, fullscreen: document.fullscreenElement === document.querySelector('#video') }));
-    console.log(JSON.stringify({ share: await page.locator('#status').textContent(), link, viewer: result }));
+    const secondContext = await browser.newContext();
+    const secondViewer = await secondContext.newPage();
+    await secondViewer.goto(link);
+    await secondViewer.waitForFunction(() => document.querySelector('#video')?.getVideoPlaybackQuality().totalVideoFrames > 5, null, { timeout: 25000 });
+    await viewer.waitForFunction(() => document.querySelector('#video')?.getVideoPlaybackQuality().totalVideoFrames > 5, null, { timeout: 25000 });
+    const result = await viewer.evaluate(() => ({ width: document.querySelector('#video').videoWidth, height: document.querySelector('#video').videoHeight, frames: document.querySelector('#video').getVideoPlaybackQuality().totalVideoFrames, status: document.querySelector('#status').textContent, audio: !document.querySelector('#video').muted, fullscreen: document.fullscreenElement === document.querySelector('#video') }));
+    const second = await secondViewer.evaluate(() => ({ frames: document.querySelector('#video').getVideoPlaybackQuality().totalVideoFrames, status: document.querySelector('#status').textContent }));
+    console.log(JSON.stringify({ share: await page.locator('#status').textContent(), link, viewer: result, secondViewer: second }));
     await page.locator('#stop').click();
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

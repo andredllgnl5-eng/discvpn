@@ -15,6 +15,7 @@
     .actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:16px}
     button{padding:10px 16px;border:1px solid #5063a8;border-radius:10px;background:#263971;color:#fff;font:inherit;cursor:pointer}
     button:disabled{opacity:.5;cursor:not-allowed}
+    .hidden{display:none}
     .hint{font-size:12px;color:#9eabc9;margin-top:12px}
   </style>
 </head>
@@ -26,6 +27,7 @@
     <div class="actions">
       <button id="fullscreen" type="button" disabled>Tela cheia</button>
       <button id="audio" type="button" disabled>Áudio indisponível</button>
+      <button id="retry" type="button" class="hidden">Tentar novamente</button>
     </div>
     <div id="audio-hint" class="hint">Aguardando informações de áudio…</div>
     <div class="hint">Compartilhamento direto WebRTC • 720p 60 FPS • Feito por Shivi Star</div>
@@ -37,12 +39,18 @@
     const audio = document.getElementById('audio');
     const fullscreen = document.getElementById('fullscreen');
     const audioHint = document.getElementById('audio-hint');
+    const retry = document.getElementById('retry');
     const host = new URLSearchParams(location.search).get('watch');
+    let peer = null;
+    let watchdog = null;
+    let generation = 0;
+    let retries = 0;
+    let receivedFrame = false;
 
     async function playVideo() {
       try {
         await video.play();
-        status.textContent = 'Ao vivo — 1280×720 a 60 FPS';
+        if (receivedFrame) status.textContent = 'Ao vivo — vídeo recebido';
       }
       catch (error) { status.textContent = 'Clique no vídeo para iniciar a reprodução.'; }
     }
@@ -71,31 +79,85 @@
       fullscreen.textContent = document.fullscreenElement ? 'Sair da tela cheia' : 'Tela cheia';
     });
     video.addEventListener('click', () => { if (video.paused) playVideo(); });
+    retry.addEventListener('click', () => { retries = 0; connect(); });
 
-    if (!host) status.textContent = 'Link de transmissão inválido.';
-    else {
-      const peer = new Peer(undefined, { secure: true });
+    function fail(message, current) {
+      if (current !== generation || receivedFrame) return;
+      clearTimeout(watchdog);
+      if (retries < 1) {
+        retries++;
+        status.textContent = `${message} Reconectando uma vez…`;
+        setTimeout(() => { if (current === generation) connect(); }, 1000);
+      } else {
+        status.textContent = `${message} Clique em “Tentar novamente”.`;
+        retry.classList.remove('hidden');
+      }
+    }
+
+    function connect() {
+      const current = ++generation;
+      clearTimeout(watchdog);
+      peer?.destroy();
+      peer = null;
+      video.srcObject = null;
+      video.muted = true;
+      receivedFrame = false;
+      fullscreen.disabled = true;
+      audio.disabled = true;
+      audio.textContent = 'Áudio indisponível';
+      retry.classList.add('hidden');
+      status.textContent = 'Conectando à transmissão…';
+      watchdog = setTimeout(() => fail('O vídeo não chegou em 15 segundos.', current), 15000);
+      peer = new Peer(undefined, { secure: true });
       peer.on('open', () => {
+        if (current !== generation) return;
         status.textContent = 'Aguardando vídeo…';
         const connection = peer.connect(host, { reliable: true });
-        connection.on('error', error => status.textContent = `Falha na transmissão: ${error.message}`);
+        connection.on('error', error => fail(`Falha na transmissão: ${error.message}.`, current));
       });
       peer.on('call', call => {
+        if (current !== generation) { call.close(); return; }
         call.answer();
         call.on('stream', stream => {
-          video.muted = true;
+          if (current !== generation) return;
           video.srcObject = stream;
           fullscreen.disabled = false;
           updateAudio(stream);
           stream.getAudioTracks().forEach(track => track.addEventListener('ended', () => updateAudio(stream)));
-          status.textContent = 'Ao vivo — 1280×720 a 60 FPS';
+          status.textContent = 'Recebendo vídeo…';
+          if (video.requestVideoFrameCallback) {
+            video.requestVideoFrameCallback(() => {
+              if (current !== generation) return;
+              receivedFrame = true;
+              clearTimeout(watchdog);
+              status.textContent = 'Ao vivo — vídeo recebido';
+            });
+          } else {
+            video.addEventListener('loadeddata', () => {
+              if (current !== generation) return;
+              receivedFrame = true;
+              clearTimeout(watchdog);
+              status.textContent = 'Ao vivo — vídeo recebido';
+            }, { once: true });
+          }
           playVideo();
         });
-        call.on('close', () => status.textContent = 'A transmissão foi encerrada.');
-        call.on('error', error => status.textContent = `Falha na transmissão: ${error.message}`);
+        call.on('close', () => {
+          if (current !== generation) return;
+          clearTimeout(watchdog);
+          status.textContent = 'A transmissão foi encerrada.';
+          retry.classList.remove('hidden');
+        });
+        call.on('error', error => fail(`Falha na transmissão: ${error.message}.`, current));
+        call.peerConnection?.addEventListener('connectionstatechange', () => {
+          if (call.peerConnection.connectionState === 'failed') fail('A conexão direta entre os navegadores falhou.', current);
+        });
       });
-      peer.on('error', error => status.textContent = `Não foi possível conectar: ${error.message}`);
+      peer.on('error', error => fail(`Não foi possível conectar: ${error.message}.`, current));
     }
+
+    if (!host) status.textContent = 'Link de transmissão inválido.';
+    else connect();
   </script>
 </body>
 </html>

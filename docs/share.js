@@ -17,16 +17,6 @@ function stop() {
   $('status').textContent = 'Transmissão encerrada.';
 }
 
-function qualitySdp(sdp) {
-  const payloads = [...sdp.matchAll(/^a=rtpmap:(\d+)\s+(?:VP8|VP9|H264)\/90000.*$/gmi)].map(match => match[1]);
-  for (const payload of payloads) {
-    const fmtp = new RegExp(`^a=fmtp:${payload} (.*)$`, 'mi');
-    if (fmtp.test(sdp)) sdp = sdp.replace(fmtp, `a=fmtp:${payload} $1;x-google-start-bitrate=5000;x-google-max-bitrate=8000`);
-    else sdp = sdp.replace(new RegExp(`(^a=rtpmap:${payload} .*$)`, 'mi'), `$1\r\na=fmtp:${payload} x-google-start-bitrate=5000;x-google-max-bitrate=8000`);
-  }
-  return sdp;
-}
-
 async function tune(call) {
   await new Promise(resolve => setTimeout(resolve, 300));
   try {
@@ -34,7 +24,7 @@ async function tune(call) {
       if (sender.track?.kind !== 'video') continue;
       const parameters = sender.getParameters();
       parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}];
-      parameters.encodings[0].maxBitrate = 8000000;
+      parameters.encodings[0].maxBitrate = 3500000;
       parameters.encodings[0].maxFramerate = 60;
       parameters.encodings[0].scaleResolutionDownBy = 1;
       parameters.degradationPreference = 'maintain-resolution';
@@ -70,7 +60,7 @@ async function start() {
     });
     peer.on('connection', connection => connection.on('open', () => {
       if (!stream || !peer) return;
-      const call = peer.call(connection.peer, stream, { sdpTransform: qualitySdp });
+      const call = peer.call(connection.peer, stream);
       calls.add(call);
       call.on('close', () => calls.delete(call));
       tune(call);
