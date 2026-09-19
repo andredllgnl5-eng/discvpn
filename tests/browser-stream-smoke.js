@@ -39,8 +39,10 @@ const docs = path.resolve(__dirname, '..', 'docs');
     catch (error) { console.log('share-status:', await page.locator('#status').textContent()); throw error; }
     const link = await page.locator('#link').inputValue();
     const viewer = await context.newPage();
+    viewer.on('console', message => console.log(`viewer:${message.type()}:${message.text()}`));
     await viewer.goto(link);
-    await viewer.waitForFunction(() => { const video = document.querySelector('#video'); return video?.readyState >= 2 && video.videoWidth > 0; }, null, { timeout: 25000 });
+    try { await viewer.waitForFunction(() => { const video = document.querySelector('#video'); return video?.readyState >= 2 && video.videoWidth > 0; }, null, { timeout: 25000 }); }
+    catch (error) { console.log('viewer-status:', await viewer.locator('#status').textContent(), 'share-status:', await page.locator('#status').textContent()); throw error; }
     await viewer.waitForFunction(() => !document.querySelector('#video').paused, null, { timeout: 10000 });
     const initial = await viewer.evaluate(() => ({ paused: document.querySelector('#video').paused, muted: document.querySelector('#video').muted, audioEnabled: !document.querySelector('#audio').disabled }));
     if (initial.paused || !initial.muted || !initial.audioEnabled) throw new Error(`Estado inicial inválido: ${JSON.stringify(initial)}`);

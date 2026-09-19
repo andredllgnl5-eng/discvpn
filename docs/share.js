@@ -58,13 +58,14 @@ async function start() {
       const audioStatus = stream.getAudioTracks().length ? 'Áudio compartilhado.' : 'Sem áudio: marque “Compartilhar áudio” no seletor do navegador, se disponível.';
       $('status').textContent = `Ao vivo — captura ${settings.width}×${settings.height} a até ${settings.frameRate} FPS. ${audioStatus}`;
     });
-    peer.on('connection', connection => connection.on('open', () => {
-      if (!stream || !peer) return;
-      const call = peer.call(connection.peer, stream);
+    peer.on('call', call => {
+      if (!stream || !peer || track.readyState !== 'live') { call.close(); return; }
       calls.add(call);
       call.on('close', () => calls.delete(call));
+      call.on('error', error => { calls.delete(call); $('status').textContent = `Falha ao enviar vídeo: ${error.message}`; });
+      call.answer(stream);
       tune(call);
-    }));
+    });
     peer.on('error', error => { $('status').textContent = `Falha na conexão: ${error.message}`; });
   } catch (error) {
     stop();

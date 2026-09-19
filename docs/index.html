@@ -46,6 +46,8 @@
     let generation = 0;
     let retries = 0;
     let receivedFrame = false;
+    let requestStream = null;
+    let requestAudio = null;
 
     async function playVideo() {
       try {
@@ -99,6 +101,10 @@
       clearTimeout(watchdog);
       peer?.destroy();
       peer = null;
+      requestStream?.getTracks().forEach(track => track.stop());
+      requestStream = null;
+      requestAudio?.close();
+      requestAudio = null;
       video.srcObject = null;
       video.muted = true;
       receivedFrame = false;
@@ -111,13 +117,15 @@
       peer = new Peer(undefined, { secure: true });
       peer.on('open', () => {
         if (current !== generation) return;
-        status.textContent = 'Aguardando vídeo…';
-        const connection = peer.connect(host, { reliable: true });
-        connection.on('error', error => fail(`Falha na transmissão: ${error.message}.`, current));
-      });
-      peer.on('call', call => {
-        if (current !== generation) { call.close(); return; }
-        call.answer();
+        status.textContent = 'Chamando o transmissor…';
+        const canvas = document.createElement('canvas');
+        canvas.width = 2; canvas.height = 2;
+        canvas.getContext('2d').fillRect(0, 0, 2, 2);
+        requestStream = canvas.captureStream(1);
+        requestAudio = new AudioContext();
+        requestStream.addTrack(requestAudio.createMediaStreamDestination().stream.getAudioTracks()[0]);
+        const call = peer.call(host, requestStream);
+        if (!call) { fail('Não foi possível iniciar a chamada.', current); return; }
         call.on('stream', stream => {
           if (current !== generation) return;
           video.srcObject = stream;
