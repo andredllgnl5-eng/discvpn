@@ -65,7 +65,8 @@ async function start() {
       $('link').value = new URL(`./?watch=${encodeURIComponent(id)}`, location.href).href;
       $('link-area').classList.remove('hidden');
       const settings = track.getSettings();
-      $('status').textContent = `Ao vivo — captura ${settings.width}×${settings.height} a até ${settings.frameRate} FPS.`;
+      const audioStatus = stream.getAudioTracks().length ? 'Áudio compartilhado.' : 'Sem áudio: marque “Compartilhar áudio” no seletor do navegador, se disponível.';
+      $('status').textContent = `Ao vivo — captura ${settings.width}×${settings.height} a até ${settings.frameRate} FPS. ${audioStatus}`;
     });
     peer.on('connection', connection => connection.on('open', () => {
       if (!stream || !peer) return;
