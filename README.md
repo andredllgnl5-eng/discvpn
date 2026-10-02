@@ -1,25 +1,37 @@
-# North America Discord VPN
+# Screen Share
 
-Aplicativo Electron para abrir o Discord usando servidores OpenVPN nos Estados Unidos ou Canadá.
+Aplicativo Windows para transmitir uma tela ou janela com o som do computador e compartilhar um link. A interface e o mecanismo de VPN foram removidos na versão 5.0.0.
 
-## Requisitos
+## Uso
 
-- Windows 10/11
-- Discord desktop
-- Acesso à internet para obter os perfis e a credencial atual do VPNBook
+1. Abra Screen Share e clique em **Escolher tela e transmitir**.
+2. Escolha a tela ou janela. O áudio de saída do Windows é incluído automaticamente, inclusive sons de outros aplicativos.
+3. Copie o link e mantenha o programa aberto.
+4. Quem recebe abre o link e clica em **Assistir com som**. O clique atende à política de reprodução de áudio do navegador.
 
-## Como funciona
+Uma captura sem faixa de áudio não gera link. O medidor mostra se há som chegando; silêncio na fonte continua sendo silêncio. Encerrar o aplicativo ou a captura encerra a transmissão. Cada início gera um link novo.
 
-O aplicativo consulta os servidores públicos do VPNBook, baixa automaticamente o perfil escolhido e obtém a credencial rotativa atual. O instalador oficial e assinado do OpenVPN está incorporado ao instalador e prepara silenciosamente o mecanismo e o driver de rede. Não é preciso baixar o OpenVPN, inserir senha nem selecionar arquivos `.ovpn`.
+O compartilhamento alternativo no navegador, em `docs/share.html`, exige marcar **Compartilhar áudio**. A disponibilidade de áudio de janelas depende do navegador; no Windows, prefira o aplicativo.
 
-O aplicativo primeiro confirma o túnel norte-americano, depois encerra e reabre o Discord. Por padrão somente os endereços conhecidos do Discord usam a VPN, enquanto jogos e outros aplicativos permanecem na conexão normal. O modo opcional de compatibilidade encaminha todo o tráfego pela VPN quando necessário para contornar o erro 2012 de transmissão.
+## Rede
 
-Isso reduz o impacto sobre outros aplicativos, mas não pode garantir ping inalterado no próprio Discord. A região de mídia e a disponibilidade do compartilhamento de tela também dependem dos servidores e políticas do Discord.
+PeerJS sinaliza as chamadas. `docs/network.json` configura os servidores STUN/TURN usados por transmissor e espectadores. A versão 5.0 usa retransmissão TURN por TLS na porta 443, pois a negociação mista entre conexão direta e relay falhou no teste entre Electron e Edge. A credencial TURN de cliente é destinada à distribuição ao player; não é uma chave administrativa. A transmissão consome a franquia do serviço Metered. Gerencie limites e revogação no painel da conta.
 
-## Atualizações automáticas pelo GitHub
+O aplicativo busca essa configuração pública a cada transmissão. Um `iceEndpoint` HTTPS pode substituir a configuração fixa e devolver uma lista `iceServers` com credenciais temporárias. Nunca coloque a chave de gerenciamento da conta no repositório.
 
-O aplicativo usa o repositório `andredllgnl5-eng/discvpn`. O instalador consulta o arquivo `latest.yml` de cada GitHub Release, baixa novas versões em segundo plano e instala a atualização ao fechar o aplicativo.
+## Desenvolvimento e verificação
 
-Para publicar manualmente, defina `GH_TOKEN` localmente e execute `npm run publish`. Nunca inclua o token no código ou no instalador.
+- `npm ci` e `node node_modules/electron/install.js`
+- `npm start`
+- `node tests/browser-stream-smoke.js`: bloqueio de captura sem áudio, dois espectadores, vídeo decodificado, energia de áudio recebida e interrupção da faixa de áudio.
+- `FORCE_RELAY=1`: força o caminho TURN nos testes; `TLS_ONLY=1` limita o teste ao TURN TLS.
+- `node tests/native-stream-smoke.js`: captura de janela e loopback real do Windows, com vídeo e energia de áudio recebidos por um player via TURN. Produz um tom curto para verificar o áudio.
+- `npm run build`: instalador Windows.
 
-O workflow em `.github/workflows/release.yml` também publica automaticamente quando uma tag `v*` é enviada ao GitHub.
+Testes usam uma fonte visual e um tom controlados. Resultados em uma máquina não garantem todas as redes, drivers, fontes com DRM ou dispositivos de som.
+
+## Publicação e atualização
+
+O repositório continua `andredllgnl5-eng/discvpn` para manter os links e o canal de atualização existentes. O appId legado foi mantido para permitir atualizar instalações antigas. O executável e os atalhos se chamam **Screen Share**. O programa roda sem elevação e o instalador não instala OpenVPN.
+
+A publicação de uma tag `v*` aciona `.github/workflows/release.yml`. A pasta `docs` é publicada pelo GitHub Pages. Atualizar a página pública não atualiza o código que um transmissor já tem aberto: ele precisa recarregar a página ou instalar o novo aplicativo e gerar outro link.

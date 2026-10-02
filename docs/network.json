@@ -1,0 +1,15 @@
+{
+  "iceServers": [
+    {
+      "urls": "stun:stun.relay.metered.ca:80"
+    },
+    {
+      "urls": [
+        "turns:global.relay.metered.ca:443?transport=tcp"
+      ],
+      "username": "b36d660f6dc6657878dd7ac3",
+      "credential": "geFi0vb+eCfvkahu"
+    }
+  ],
+  "iceTransportPolicy": "relay"
+}

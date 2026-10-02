@@ -1,32 +1,34 @@
 {
-  "name": "canada-discord-vpn",
-  "version": "4.2.1",
-  "description": "Canada OpenVPN split-tunnel launcher for Discord",
+  "name": "screen-share",
+  "version": "5.0.0",
+  "description": "Screen sharing with computer audio and a viewer link",
   "main": "src/main.js",
   "author": "Andre",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win nsis",
-    "publish": "electron-builder --win nsis --publish always"
+    "build": "electron-builder --win nsis portable",
+    "publish": "electron-builder --win nsis portable --publish always"
   },
   "dependencies": {
     "electron-updater": "^6.6.2",
     "peerjs": "^1.5.5"
   },
   "devDependencies": {
-    "electron": "^38.1.2",
+    "electron": "^44.5.1",
     "electron-builder": "^26.0.12",
-    "playwright-core": "^1.55.0"
+    "playwright-core": "^1.63.0"
   },
   "build": {
     "appId": "br.com.andre.japandiscordvpn",
-    "productName": "Canada Discord VPN",
+    "productName": "Screen Share",
+    "artifactName": "Screen-Share-Setup-${version}.${ext}",
     "directories": {
       "output": "dist"
     },
     "files": [
       "src/**/*",
+      "docs/**/*",
       "assets/**/*",
       "package.json"
     ],
@@ -40,15 +42,19 @@
           ]
         }
       ],
-      "requestedExecutionLevel": "requireAdministrator"
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Canada Discord VPN",
+      "shortcutName": "Screen Share",
       "include": "build/installer.nsh"
+    },
+    "portable": {
+      "artifactName": "Screen-Share-${version}-Portable.exe",
+      "requestExecutionLevel": "user"
     },
     "publish": [
       {
