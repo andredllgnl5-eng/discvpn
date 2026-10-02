@@ -67,6 +67,19 @@ async function connect() {
     call = peer.call(host, requestStream);
     if (!call) { failure('Não foi possível iniciar a chamada.', current); return; }
     const connection = call.peerConnection;
+    let relayRejected = false;
+    connection.addEventListener('icecandidateerror', event => {
+      if (/^turns?:/.test(event.url || '') && [400, 401, 403, 486, 508].includes(event.errorCode)) relayRejected = true;
+    });
+    connection.addEventListener('icegatheringstatechange', () => {
+      if (connection.iceGatheringState === 'complete' && relayRejected && !incoming) {
+        failure('O servidor de transmissão recusou a conexão. A franquia pode estar esgotada ou a credencial bloqueada. O responsável pelo Screen Share precisa verificar o serviço TURN.', current, false);
+      }
+    });
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => failure(relayRejected
+      ? 'O servidor de transmissão recusou a conexão. Verifique a franquia e a credencial TURN no painel Metered.'
+      : 'Nenhum vídeo chegou. Confirme que o transmissor manteve a captura aberta e tente novamente.', current, !relayRejected), 20000);
     call.on('stream', stream => {
       if (current !== generation) return;
       video.srcObject = stream; video.muted = false; updateAudio(stream);
