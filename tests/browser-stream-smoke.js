@@ -64,6 +64,8 @@ const docs = path.resolve(__dirname, '..', 'docs');
       await viewer.goto(link);
       try { await viewer.waitForFunction(() => !document.querySelector('#audio').disabled, null, { timeout: 45000 }); }
       catch (error) { console.error('viewer status:', await viewer.locator('#status').innerText()); throw error; }
+      await viewer.waitForFunction(() => !document.querySelector('video').paused && document.querySelector('video').getVideoPlaybackQuality().totalVideoFrames > 5);
+      assert.equal(await viewer.locator('video').evaluate(video => video.muted), true, 'Imagem deve iniciar automaticamente sem violar a política de áudio do navegador.');
       await viewer.locator('#audio').click();
       await viewer.waitForFunction(() => document.querySelector('video').getVideoPlaybackQuality().totalVideoFrames > 10);
       let heard = false;

@@ -1,10 +1,10 @@
 const $ = id => document.getElementById(id);
 const video = $('video');
 const host = new URLSearchParams(location.search).get('watch');
-let peer, call, requestStream, requestAudio, watchdog, statsTimer, reconnectTimer;
+let peer, call, requestStream, requestAudio, watchdog, statsTimer, reconnectTimer, playbackTimer;
 let generation = 0, retries = 0, incoming = false, lastBytes = 0, lastData = 0;
 function cleanup() {
-  clearTimeout(watchdog); clearTimeout(reconnectTimer); clearInterval(statsTimer);
+  clearTimeout(watchdog); clearTimeout(reconnectTimer); clearTimeout(playbackTimer); clearInterval(statsTimer);
   call?.close(); call = null; peer?.destroy(); peer = null;
   requestStream?.getTracks().forEach(track => track.stop()); requestStream = null;
   requestAudio?.close().catch(() => {}); requestAudio = null;
@@ -29,7 +29,7 @@ function updateAudio(stream) {
   const hasAudio = stream.getAudioTracks().some(track => track.readyState === 'live');
   $('audio').disabled = !hasAudio || !incoming;
   $('audio-hint').textContent = hasAudio
-    ? 'Clique em “Assistir com som” para liberar o áudio no navegador.'
+    ? video.muted ? 'A imagem inicia automaticamente. Clique em “Ativar som” para ouvir.' : 'Áudio ligado. Ajuste o volume nos controles do vídeo.'
     : 'Esta transmissão não enviou áudio. Peça ao transmissor para usar a nova versão do Screen Share e gerar outro link.';
 }
 $('audio').onclick = async () => {
@@ -38,7 +38,11 @@ $('audio').onclick = async () => {
   catch { $('status').textContent = 'O navegador bloqueou a reprodução. Clique novamente em “Assistir com som”.'; }
 };
 video.addEventListener('volumechange', () => { $('audio').textContent = video.muted || video.volume === 0 ? 'Ativar som' : video.paused ? 'Assistir com som' : 'Som ativado'; });
-video.addEventListener('playing', () => { $('status').textContent = 'Ao vivo — imagem e áudio conectados'; });
+function showPlaybackState() {
+  $('status').textContent = video.muted || video.volume === 0 ? 'Ao vivo — clique em “Ativar som” para ouvir.' : 'Ao vivo — imagem e som';
+}
+video.addEventListener('playing', showPlaybackState);
+video.addEventListener('volumechange', () => { if (incoming && !video.paused) showPlaybackState(); });
 $('fullscreen').onclick = async () => {
   try { if (document.fullscreenElement) await document.exitFullscreen(); else await video.requestFullscreen(); }
   catch { $('status').textContent = 'Use o controle de tela cheia do vídeo.'; }
@@ -47,13 +51,14 @@ $('retry').onclick = () => { retries = 0; connect(); };
 async function connect() {
   const current = ++generation;
   cleanup(); incoming = false; lastBytes = 0; lastData = Date.now();
+  video.muted = true;
   $('audio').disabled = true; $('audio').textContent = 'Assistir com som'; $('fullscreen').disabled = true;
   $('retry').classList.add('hidden'); $('status').textContent = 'Conectando à transmissão…';
   if (typeof Peer !== 'function') { failure('Não foi possível carregar o player. Recarregue a página.', current, false); return; }
   const network = await ScreenShareNetwork.options();
   if (current !== generation) return;
   if (retries > 0 && network.relay) network.peer.config.iceTransportPolicy = 'relay';
-  const networkFailure = network.relay ? 'A conexão de vídeo falhou mesmo com retransmissão. Verifique a internet e tente novamente.' : 'A rede bloqueou a conexão direta e o servidor de retransmissão está indisponível.';
+  const networkFailure = network.relay ? 'A conexão de vídeo falhou mesmo com retransmissão. Verifique a internet e tente novamente.' : 'Não foi possível conectar as duas redes diretamente. Esta versão está sem servidor de retransmissão (TURN). É preciso configurar um servidor disponível para conectar essas redes.';
   watchdog = setTimeout(() => failure('Nenhum vídeo chegou. Confirme que o transmissor manteve o aplicativo aberto.', current), 30000);
   peer = new Peer(undefined, network.peer);
   peer.on('open', () => {
@@ -79,10 +84,16 @@ async function connect() {
     clearTimeout(watchdog);
     watchdog = setTimeout(() => failure(relayRejected
       ? 'O servidor de transmissão recusou a conexão. Verifique a franquia e a credencial TURN no painel Metered.'
-      : 'Nenhum vídeo chegou. Confirme que o transmissor manteve a captura aberta e tente novamente.', current, !relayRejected), 20000);
+      : connection.iceConnectionState === 'checking' || connection.iceConnectionState === 'failed'
+        ? networkFailure
+        : 'Nenhum vídeo chegou. Confirme que o transmissor manteve a captura aberta e tente novamente.', current, network.relay && !relayRejected), 20000);
     call.on('stream', stream => {
       if (current !== generation) return;
-      video.srcObject = stream; video.muted = false; updateAudio(stream);
+      if (video.srcObject !== stream) video.srcObject = stream;
+      updateAudio(stream);
+      video.play().catch(() => {
+        if (current === generation) $('status').textContent = 'Clique em “Assistir com som” para iniciar o vídeo.';
+      });
       stream.addEventListener('addtrack', () => updateAudio(stream));
       stream.getAudioTracks().forEach(track => track.addEventListener('ended', () => {
         failure('O áudio da transmissão foi interrompido. Peça um novo link ao transmissor.', current, false);
@@ -93,12 +104,17 @@ async function connect() {
         const stats = await connection.getStats();
         if (current !== generation) return;
         let bytes = 0;
-        stats.forEach(report => { if (report.type === 'inbound-rtp' && report.kind === 'video') bytes += report.bytesReceived || 0; });
+        stats.forEach(report => { if (report.type === 'inbound-rtp' && (report.kind || report.mediaType) === 'video') bytes += report.bytesReceived || 0; });
         if (bytes > lastBytes) {
           lastData = Date.now();
           if (!incoming) {
             incoming = true; clearTimeout(watchdog); $('fullscreen').disabled = false;
-            $('status').textContent = 'Transmissão pronta — clique em “Assistir com som”.';
+            $('audio').textContent = video.muted ? 'Ativar som' : 'Som ativado';
+            if (!video.paused) showPlaybackState();
+            else $('status').textContent = 'Transmissão pronta — clique em “Assistir com som”.';
+            playbackTimer = setTimeout(() => {
+              if (current === generation && !video.paused && video.readyState < 2) failure('Os dados chegaram, mas o navegador não conseguiu exibir o vídeo. Tente novamente ou abra o link em Chrome ou Edge atualizado.', current, false);
+            }, 12000);
             if (video.srcObject) updateAudio(video.srcObject);
           }
         } else if (incoming && Date.now() - lastData > 20000) failure('A transmissão parou de enviar vídeo.', current);
@@ -109,7 +125,7 @@ async function connect() {
     call.on('error', () => failure(networkFailure, current));
     connection.addEventListener('connectionstatechange', () => {
       if (current !== generation) return;
-      if (connection.connectionState === 'failed') failure(networkFailure, current);
+      if (connection.connectionState === 'failed') failure(networkFailure, current, network.relay);
       if (connection.connectionState === 'disconnected') $('status').textContent = 'A conexão oscilou. Tentando recuperar…';
       if (connection.connectionState === 'connected' && incoming) $('status').textContent = video.paused ? 'Transmissão pronta — clique em “Assistir com som”.' : 'Ao vivo — imagem e áudio conectados';
     });
